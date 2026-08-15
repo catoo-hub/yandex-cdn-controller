@@ -2,7 +2,7 @@ import pytest
 import respx
 from httpx import Response
 
-from cdn_controller.clients import YandexClient, YandexIamAuth, webhook_signature
+from cdn_controller.clients import RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature
 from cdn_controller.models import TargetConfig
 
 
@@ -53,3 +53,35 @@ async def test_authorized_key_is_exchanged_and_cached(tmp_path, monkeypatch):
     finally:
         await auth.close()
     assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_remnawave_274_uses_collection_patch_with_minimal_payload():
+    get_route = respx.get("https://panel.example.com/api/hosts/host-uuid").mock(
+        return_value=Response(200, json={"response": {
+            "uuid": "host-uuid", "address": "old.example.com", "sni": "old.example.com",
+            "host": "old.example.com", "remark": "must-not-be-sent",
+        }})
+    )
+    patch_route = respx.patch("https://panel.example.com/api/hosts").mock(
+        return_value=Response(200, json={"response": {
+            "uuid": "host-uuid", "address": "new.example.com", "sni": "new.example.com",
+            "host": "new.example.com",
+        }})
+    )
+    client = RemnawaveClient(
+        "https://panel.example.com", "token", "/api/hosts/{host_id}", "/api/hosts"
+    )
+    try:
+        current = await client.get_host("host-uuid")
+        await client.patch_host(
+            "host-uuid", current, "new.example.com", ["address", "sni", "host"]
+        )
+    finally:
+        await client.close()
+    assert get_route.called
+    assert patch_route.calls[0].request.content == (
+        b'{"uuid":"host-uuid","address":"new.example.com",'
+        b'"sni":"new.example.com","host":"new.example.com"}'
+    )

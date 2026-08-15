@@ -251,6 +251,12 @@ class CloudflareClient:
             raise ProviderError("cloudflare", json.dumps(result.get("errors", [])))
         return result["result"]["id"]
 
+    async def get_zone(self, zone_id: str) -> dict:
+        result = await self.http.request("GET", f"/zones/{zone_id}")
+        if not result.get("success", True) or not isinstance(result.get("result"), dict):
+            raise ProviderError("cloudflare", json.dumps(result.get("errors", [])))
+        return result["result"]
+
     async def delete_record(self, zone_id: str, record_id: str) -> None:
         await self.http.request("DELETE", f"/zones/{zone_id}/dns_records/{record_id}")
 
@@ -259,15 +265,17 @@ class CloudflareClient:
 
 
 class RemnawaveClient:
-    def __init__(self, base_url: str, token: str, host_endpoint: str):
-        self.host_endpoint = host_endpoint
+    def __init__(self, base_url: str, token: str, host_get_endpoint: str,
+                 host_update_endpoint: str):
+        self.host_get_endpoint = host_get_endpoint
+        self.host_update_endpoint = host_update_endpoint
         self.http = JsonClient(
             "remnawave", base_url.rstrip("/"),
             {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         )
 
-    def path(self, host_id: str) -> str:
-        return self.host_endpoint.format(host_id=host_id)
+    def get_path(self, host_id: str) -> str:
+        return self.host_get_endpoint.format(host_id=host_id)
 
     @staticmethod
     def unwrap(payload: dict) -> dict:
@@ -277,16 +285,24 @@ class RemnawaveClient:
         return payload
 
     async def get_host(self, host_id: str) -> dict:
-        return self.unwrap(await self.http.request("GET", self.path(host_id)))
+        return self.unwrap(await self.http.request("GET", self.get_path(host_id)))
 
     async def patch_host(self, host_id: str, current: dict, fqdn: str, fields: list[str]) -> dict:
-        payload = dict(current)
+        payload = {"uuid": host_id}
         aliases = {"address": "address", "sni": "sni", "host": "host"}
         for field in fields:
             if field not in aliases:
                 raise ProviderError("remnawave", f"unsupported update field {field}")
             payload[aliases[field]] = fqdn
-        return self.unwrap(await self.http.request("PATCH", self.path(host_id), json=payload))
+        return self.unwrap(await self.http.request("PATCH", self.host_update_endpoint, json=payload))
+
+    async def restore_host(self, host_id: str, previous: dict, fields: list[str]) -> dict:
+        payload = {"uuid": host_id}
+        for field in fields:
+            if field not in {"address", "sni", "host"}:
+                raise ProviderError("remnawave", f"unsupported restore field {field}")
+            payload[field] = previous.get(field)
+        return self.unwrap(await self.http.request("PATCH", self.host_update_endpoint, json=payload))
 
     async def close(self) -> None:
         await self.http.close()
@@ -338,4 +354,6 @@ def remnawave_client(provider, token_env: str) -> RemnawaveClient:
     token = os.getenv(token_env, "")
     if not token:
         raise ProviderError("remnawave", f"environment variable {token_env} is empty")
-    return RemnawaveClient(provider.base_url, token, provider.host_endpoint)
+    return RemnawaveClient(
+        provider.base_url, token, provider.host_get_endpoint, provider.host_update_endpoint
+    )

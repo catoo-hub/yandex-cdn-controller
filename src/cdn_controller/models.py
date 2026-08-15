@@ -99,7 +99,8 @@ class TargetConfig(BaseModel):
 class RemnawaveProvider(BaseModel):
     base_url: str
     token_env: str
-    host_endpoint: str = "/api/hosts/{host_id}"
+    host_get_endpoint: str = "/api/hosts/{host_id}"
+    host_update_endpoint: str = "/api/hosts"
 
 
 class ProviderConfig(BaseModel):

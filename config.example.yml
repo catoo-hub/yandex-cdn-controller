@@ -11,7 +11,9 @@ providers:
     primary:                            # Произвольное локальное имя панели.
       base_url: https://panel.nyako.app # URL панели без завершающего слеша.
       token_env: REMNAWAVE_PRIMARY_TOKEN
-      host_endpoint: /api/hosts/{host_id}
+      # Remnawave Panel 2.7.3–2.7.4 и 2.8.x.
+      host_get_endpoint: /api/hosts/{host_id}
+      host_update_endpoint: /api/hosts
 
 targets:
   - id: de-main                         # Уникальное локальное имя цели.

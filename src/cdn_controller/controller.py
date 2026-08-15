@@ -279,7 +279,9 @@ class Controller:
                     target.transport.port,
                 )
                 if not health.healthy:
-                    await client.http.request("PATCH", client.path(target.remnawave.host_id), json=previous)
+                    await client.restore_host(
+                        target.remnawave.host_id, previous, target.remnawave.update_fields
+                    )
                     ROTATIONS.labels(target_id, "rollback").inc()
                     raise ProviderError("health", "post-switch health check failed")
             finally:

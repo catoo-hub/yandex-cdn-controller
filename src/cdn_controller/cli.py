@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 
+from .clients import remnawave_client
 from .controller import Controller
 from .db import Database
 from .models import load_config
@@ -19,12 +20,29 @@ async def execute(args) -> None:
     try:
         if args.command == "validate":
             target = config.target(args.target) if args.target else None
+            provider_checks = {"yandex_iam": "not-checked-in-dry-run"}
             if not settings.dry_run:
                 await controller.yandex.auth.validate(exchange_token=True)
+                provider_checks["yandex_iam"] = "ok"
+                targets = [target] if target else [item for item in config.targets if item.enabled]
+                for item in targets:
+                    zone = await controller.cloudflare.get_zone(item.domain.cloudflare_zone_id)
+                    remna_provider = config.providers.remnawave[item.remnawave.panel]
+                    remna = remnawave_client(remna_provider, remna_provider.token_env)
+                    try:
+                        host = await remna.get_host(item.remnawave.host_id)
+                    finally:
+                        await remna.close()
+                    if str(host.get("uuid")) != item.remnawave.host_id:
+                        raise RuntimeError(
+                            f"Remnawave returned unexpected Host UUID for target {item.id}"
+                        )
+                    provider_checks[f"cloudflare:{item.id}"] = zone.get("name", "ok")
+                    provider_checks[f"remnawave:{item.id}"] = "ok"
             print(json.dumps({
                 "valid": True,
                 "dry_run": settings.dry_run,
-                "yandex_iam": "not-checked-in-dry-run" if settings.dry_run else "ok",
+                "providers": provider_checks,
                 "target": target.model_dump() if target else None,
             }, indent=2))
         elif args.command == "status":
