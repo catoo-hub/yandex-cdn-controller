@@ -102,6 +102,34 @@ def test_provider_only_transport_does_not_require_http_path_or_statuses():
 
 
 @pytest.mark.asyncio
+async def test_import_existing_discovers_yandex_provider_endpoint(tmp_path):
+    config = AppConfig.model_validate({
+        "targets": [{
+            "id": "direct", "yandex": {"folder_id": "folder", "origin_group_id": 42,
+            "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+            "transport": {"healthcheck_mode": "provider_only"},
+            "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 600},
+        }]
+    })
+    db = Database(str(tmp_path / "state.db"))
+    controller = Controller(config, Settings(dry_run=True, database_path=db.path), db)
+    await controller.initialize()
+    try:
+        controller.yandex.get_resource = AsyncMock(return_value={
+            "id": "resource", "cname": "internal.example",
+            "providerCname": "stable.topology.gslb.yccdn.ru",
+            "sslCertificate": {"type": "DONT_USE", "status": "READY"},
+        })
+        generation = await controller.import_existing("direct", "resource", bytes_sent=123)
+        assert generation.fqdn == "stable.topology.gslb.yccdn.ru"
+        assert generation.provider_cname == "stable.topology.gslb.yccdn.ru"
+        assert generation.bytes_sent == 123
+        assert generation.metadata["resource_cname"] == "internal.example"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
 async def test_dry_run_rotation_never_changes_active_generation(tmp_path):
     config = AppConfig.model_validate({
         "providers": {"remnawave": {"primary": {

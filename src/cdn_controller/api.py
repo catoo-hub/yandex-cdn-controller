@@ -21,7 +21,7 @@ class ActionRequest(BaseModel):
 
 class ImportRequest(BaseModel):
     resource_id: str
-    fqdn: str
+    fqdn: str | None = None
     bytes_sent: float = 0
     actor: str = "api"
 
@@ -106,7 +106,9 @@ def create_app(controller: Controller, config: AppConfig, settings: Settings) ->
     @app.post("/api/v1/targets/{target_id}/import", dependencies=[Depends(authorize)])
     async def import_existing(target_id: str, body: ImportRequest):
         config.target(target_id)
-        generation = await controller.db.import_active(target_id, body.resource_id, body.fqdn, body.bytes_sent)
+        generation = await controller.import_existing(
+            target_id, body.resource_id, body.fqdn, body.bytes_sent
+        )
         return generation.model_dump(mode="json")
 
     @app.get("/api/v1/targets/{target_id}/cleanup-preview", dependencies=[Depends(authorize)])

@@ -487,6 +487,23 @@ class Controller:
             shutil.copy2(self.settings.database_path, destination)
         return destination
 
+    async def import_existing(self, target_id: str, resource_id: str,
+                              fqdn: str | None = None, bytes_sent: float = 0) -> Generation:
+        target = self.config.target(target_id)
+        resource = await self.yandex.get_resource(resource_id)
+        provider_cname = resource.get("providerCname") or resource.get("provider_cname")
+        endpoint = fqdn or (target.domain.name if target.domain and target.domain.name else provider_cname)
+        if not endpoint:
+            raise ProviderError("yandex-cdn", "resource has no providerCname; specify FQDN explicitly")
+        ssl = resource.get("sslCertificate") or {}
+        certificate_id = (((ssl.get("data") or {}).get("cm") or {}).get("id")
+                          if str(ssl.get("type", "")).upper() == "CM" else None)
+        generation = await self.db.import_active(target_id, resource_id, endpoint, bytes_sent)
+        return await self.db.update_generation(
+            generation.id, provider_cname=provider_cname, certificate_id=certificate_id,
+            metadata={"resource_cname": resource.get("cname"), "imported_at": time.time()},
+        )
+
     async def status(self) -> dict:
         return {
             "dry_run": self.settings.dry_run,

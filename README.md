@@ -157,8 +157,11 @@ Resource активен, имеет `providerCname`, сертификат гот
 
 ```bash
 docker compose run --rm controller cli import-existing \
-  direct-yandex RESOURCE_ID account-name.topology.gslb.yccdn.ru --bytes-sent 0
+  direct-yandex RESOURCE_ID --bytes-sent 0
 ```
+
+Контроллер сам прочитает `providerCname`, основной `cname` и сертификат через Resource.Get.
+Явный FQDN третьим аргументом нужен только для пользовательского домена, которого нет в config.
 
 Ручной запуск является разрушительной операцией и требует подтверждения в Telegram:
 

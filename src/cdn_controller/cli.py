@@ -65,7 +65,9 @@ async def execute(args) -> None:
         elif args.command == "resume":
             await db.set_paused(args.target, False)
         elif args.command == "import-existing":
-            print((await db.import_active(args.target, args.resource_id, args.fqdn, args.bytes_sent)).model_dump_json(indent=2))
+            print((await controller.import_existing(
+                args.target, args.resource_id, args.fqdn, args.bytes_sent
+            )).model_dump_json(indent=2))
         elif args.command == "cleanup":
             print(json.dumps({"candidates": [g.model_dump(mode="json") for g in await db.generations(args.target)
                                              if g.state.value == "RETIRED"], "deleted": False}, indent=2))
@@ -94,7 +96,7 @@ def parser() -> argparse.ArgumentParser:
     imported = commands.add_parser("import-existing")
     imported.add_argument("target")
     imported.add_argument("resource_id")
-    imported.add_argument("fqdn")
+    imported.add_argument("fqdn", nargs="?")
     imported.add_argument("--bytes-sent", type=float, default=0)
     commands.add_parser("monitoring-test")
     commands.add_parser("telegram-test")
