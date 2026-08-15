@@ -5,6 +5,22 @@ from httpx import Response
 from cdn_controller.clients import (
     CloudflareClient, RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature,
 )
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_certificate_requests_full_view():
+    route = respx.get(
+        "https://certificate-manager.api.cloud.yandex.net/certificate-manager/v1/certificates/cert-id",
+        params={"view": "FULL"},
+    ).mock(return_value=Response(200, json={"id": "cert-id", "challenges": []}))
+    client = YandexClient("", required=False)
+    try:
+        result = await client.get_certificate("cert-id")
+        assert result["id"] == "cert-id"
+        assert route.called
+    finally:
+        await client.close()
 from cdn_controller.models import TargetConfig
 
 

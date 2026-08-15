@@ -152,7 +152,12 @@ class YandexClient:
         )
 
     async def get_certificate(self, certificate_id: str) -> dict:
-        return await self.cert.request("GET", f"/certificate-manager/v1/certificates/{certificate_id}")
+        # Certificate Manager omits domain validation challenges in the BASIC
+        # view. FULL is required so the controller can publish the DNS record.
+        return await self.cert.request(
+            "GET", f"/certificate-manager/v1/certificates/{certificate_id}",
+            params={"view": "FULL"},
+        )
 
     async def create_resource(self, target: TargetConfig, fqdn: str, certificate_id: str,
                               idempotency_key: str) -> dict:

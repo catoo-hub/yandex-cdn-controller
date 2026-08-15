@@ -171,11 +171,12 @@ class Controller:
             raise RuntimeError("target is locked")
         try:
             _, existing = await self.db.active_and_reserve(target_id)
-            if existing:
+            if existing and existing.state == RotationState.READY:
                 return existing
-            generation = await self.db.reserve_generation(target_id, target.domain.render)
-            await self.notifier.emit(Event(target_id, "INFO", "prepare-started",
-                                           f"Preparing {generation.fqdn}", actor=actor))
+            generation = existing or await self.db.reserve_generation(target_id, target.domain.render)
+            if not existing:
+                await self.notifier.emit(Event(target_id, "INFO", "prepare-started",
+                                               f"Preparing {generation.fqdn}", actor=actor))
             if self.settings.dry_run:
                 generation = await self.db.update_generation(
                     generation.id, state=RotationState.READY,
@@ -188,41 +189,59 @@ class Controller:
                                                f"DRY-RUN reserve ready: {generation.fqdn}", actor=actor))
                 return generation
 
-            cert_operation = await self.yandex.create_certificate(
-                target.yandex.folder_id, generation.fqdn, f"cert:{target.id}:{generation.sequence}"
-            )
-            cert_result = await self.yandex.wait_operation(cert_operation)
-            certificate = cert_result["response"]
-            cert_id = str(certificate["id"])
-            generation = await self.db.update_generation(generation.id, certificate_id=cert_id,
-                                                         metadata={"certificate_operation": cert_operation.get("id")})
-            if not certificate.get("challenges"):
-                certificate = await self._wait_certificate(cert_id)
-            challenge = self._dns_challenge(certificate)
-            validation_id = await self.cloudflare.upsert_record(
-                target.domain.cloudflare_zone_id, challenge["type"], challenge["name"], challenge["value"],
-                f"cdn-controller validation {target.id}/{generation.sequence}",
-            )
-            generation = await self.db.update_generation(generation.id, validation_record_id=validation_id)
-            certificate = await self._wait_certificate(cert_id, issued=True)
-            resource_operation = await self.yandex.create_resource(
-                target, generation.fqdn, cert_id, f"cdn:{target.id}:{generation.sequence}"
-            )
-            resource_result = await self.yandex.wait_operation(resource_operation)
-            resource = extract_resource(resource_result)
-            resource_id = str(resource["id"])
+            if generation.certificate_id:
+                cert_id = generation.certificate_id
+                certificate = await self.yandex.get_certificate(cert_id)
+            else:
+                cert_operation = await self.yandex.create_certificate(
+                    target.yandex.folder_id, generation.fqdn, f"cert:{target.id}:{generation.sequence}"
+                )
+                cert_result = await self.yandex.wait_operation(cert_operation)
+                certificate = cert_result["response"]
+                cert_id = str(certificate["id"])
+                generation = await self.db.update_generation(
+                    generation.id, certificate_id=cert_id,
+                    metadata={**generation.metadata, "certificate_operation": cert_operation.get("id")},
+                )
+            if str(certificate.get("status", "")).upper() != "ISSUED":
+                if not certificate.get("challenges"):
+                    certificate = await self._wait_certificate(cert_id)
+                if not generation.validation_record_id:
+                    challenge = self._dns_challenge(certificate)
+                    validation_id = await self.cloudflare.upsert_record(
+                        target.domain.cloudflare_zone_id, challenge["type"], challenge["name"], challenge["value"],
+                        f"cdn-controller validation {target.id}/{generation.sequence}",
+                    )
+                    generation = await self.db.update_generation(
+                        generation.id, validation_record_id=validation_id,
+                    )
+                await self._wait_certificate(cert_id, issued=True)
+
+            if generation.resource_id:
+                resource_id = generation.resource_id
+            else:
+                resource_operation = await self.yandex.create_resource(
+                    target, generation.fqdn, cert_id, f"cdn:{target.id}:{generation.sequence}"
+                )
+                resource_result = await self.yandex.wait_operation(resource_operation)
+                resource = extract_resource(resource_result)
+                resource_id = str(resource["id"])
+                generation = await self.db.update_generation(
+                    generation.id, resource_id=resource_id,
+                    metadata={**generation.metadata, "resource_operation": resource_operation.get("id")},
+                )
             resource = await self._wait_resource(resource_id)
             provider_cname = resource.get("providerCname") or resource.get("provider_cname")
             if not provider_cname:
                 raise ProviderError("yandex-cdn", "resource response has no provider_cname")
-            dns_id = await self.cloudflare.upsert_record(
-                target.domain.cloudflare_zone_id, "CNAME", generation.fqdn, provider_cname,
-                f"cdn-controller target {target.id}/{generation.sequence}",
-            )
-            generation = await self.db.update_generation(
-                generation.id, resource_id=resource_id, provider_cname=provider_cname,
-                dns_record_id=dns_id,
-            )
+            if not generation.dns_record_id:
+                dns_id = await self.cloudflare.upsert_record(
+                    target.domain.cloudflare_zone_id, "CNAME", generation.fqdn, provider_cname,
+                    f"cdn-controller target {target.id}/{generation.sequence}",
+                )
+                generation = await self.db.update_generation(
+                    generation.id, provider_cname=provider_cname, dns_record_id=dns_id,
+                )
             health = await self._wait_health(target, generation.fqdn)
             if not health.healthy:
                 raise ProviderError("health", health.error or "reserve is unhealthy", health.root_status)
