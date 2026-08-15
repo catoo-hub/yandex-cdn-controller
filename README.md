@@ -49,7 +49,8 @@ CDN-ресурсы, но подключает каждый из них к одн
 Для Remnawave Panel `2.7.3–2.7.4` используется официальный contract `2.7.2`:
 `GET /api/hosts/{uuid}` и `PATCH /api/hosts` с `uuid` в body. Этот минимальный payload также
 совместим с Panel `2.8.x`; новые дополнительные nullable-поля не отправляются. Перед live-запуском
-`cli validate` выполняет только read-only GET нужного Host и проверяет UUID.
+`cli validate` выполняет только read-only GET нужного Host, проверяет UUID и читает одну DNS-запись
+Cloudflare. Отдельное право `Zone:Read` не требуется: достаточно zone-scoped `DNS:Edit`.
 
 ## Что записывать в .env
 

@@ -26,7 +26,7 @@ async def execute(args) -> None:
                 provider_checks["yandex_iam"] = "ok"
                 targets = [target] if target else [item for item in config.targets if item.enabled]
                 for item in targets:
-                    zone = await controller.cloudflare.get_zone(item.domain.cloudflare_zone_id)
+                    await controller.cloudflare.validate_dns_access(item.domain.cloudflare_zone_id)
                     remna_provider = config.providers.remnawave[item.remnawave.panel]
                     remna = remnawave_client(remna_provider, remna_provider.token_env)
                     try:
@@ -37,7 +37,7 @@ async def execute(args) -> None:
                         raise RuntimeError(
                             f"Remnawave returned unexpected Host UUID for target {item.id}"
                         )
-                    provider_checks[f"cloudflare:{item.id}"] = zone.get("name", "ok")
+                    provider_checks[f"cloudflare:{item.id}"] = "dns-access-ok"
                     provider_checks[f"remnawave:{item.id}"] = "ok"
             print(json.dumps({
                 "valid": True,

@@ -2,7 +2,9 @@ import pytest
 import respx
 from httpx import Response
 
-from cdn_controller.clients import RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature
+from cdn_controller.clients import (
+    CloudflareClient, RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature,
+)
 from cdn_controller.models import TargetConfig
 
 
@@ -85,3 +87,17 @@ async def test_remnawave_274_uses_collection_patch_with_minimal_payload():
         b'{"uuid":"host-uuid","address":"new.example.com",'
         b'"sni":"new.example.com","host":"new.example.com"}'
     )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cloudflare_validation_uses_dns_scope_not_zone_read():
+    route = respx.get("https://api.cloudflare.com/client/v4/zones/zone-id/dns_records").mock(
+        return_value=Response(200, json={"success": True, "result": []})
+    )
+    client = CloudflareClient("token")
+    try:
+        await client.validate_dns_access("zone-id")
+    finally:
+        await client.close()
+    assert route.calls[0].request.url.params["per_page"] == "1"

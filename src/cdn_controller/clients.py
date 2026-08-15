@@ -251,11 +251,14 @@ class CloudflareClient:
             raise ProviderError("cloudflare", json.dumps(result.get("errors", [])))
         return result["result"]["id"]
 
-    async def get_zone(self, zone_id: str) -> dict:
-        result = await self.http.request("GET", f"/zones/{zone_id}")
-        if not result.get("success", True) or not isinstance(result.get("result"), dict):
+    async def validate_dns_access(self, zone_id: str) -> None:
+        # DNS:Edit tokens scoped to one zone do not necessarily have Zone:Read.
+        # Listing one DNS record exercises the same zone-scoped API used by upsert.
+        result = await self.http.request(
+            "GET", f"/zones/{zone_id}/dns_records", params={"per_page": 1}
+        )
+        if not result.get("success", True) or not isinstance(result.get("result"), list):
             raise ProviderError("cloudflare", json.dumps(result.get("errors", [])))
-        return result["result"]
 
     async def delete_record(self, zone_id: str, record_id: str) -> None:
         await self.http.request("DELETE", f"/zones/{zone_id}/dns_records/{record_id}")
