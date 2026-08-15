@@ -1,38 +1,56 @@
+# Частота проверки CDN, сертификата, HTTP и трафика. 300 = каждые 5 минут.
 poll_interval_seconds: 300
+# Одинаковое уведомление повторяется не чаще одного раза за этот интервал.
 notification_dedup_seconds: 1800
+# Старый CDN остаётся включён после переключения указанное число часов.
 drain_hours: 24
+
+# Подключения к Remnawave. Токен хранится в .env, здесь только имя переменной.
 providers:
   remnawave:
-    primary:
-      base_url: https://panel.example.com
+    primary:                            # Произвольное локальное имя панели.
+      base_url: https://panel.nyako.app # URL панели без завершающего слеша.
       token_env: REMNAWAVE_PRIMARY_TOKEN
       host_endpoint: /api/hosts/{host_id}
 
 targets:
-  - id: de-main
+  - id: de-main                         # Уникальное локальное имя цели.
     enabled: true
     yandex:
-      folder_id: replace-me
+      # ID каталога Yandex Cloud: выбрать каталог -> Обзор -> ID каталога.
+      folder_id: replace-with-yandex-folder-id
+      # Числовой ID существующей origin group, ведущей на dewl.nyako.app.
+      # Это не ID CDN-ресурса.
       origin_group_id: 123456
       origin_protocol: HTTPS
-      origin_host_header: origin.example.com
+      # Настоящий домен origin-ноды; не новый публичный CDN-домен.
+      origin_host_header: dewl.nyako.app
     domain:
-      zone: example.com
-      pattern: yc-de-{sequence:03d}.example.com
-      cloudflare_zone_id: replace-me
+      # DNS-зона, обслуживаемая Cloudflare.
+      zone: nyako.app
+      # Первый домен будет yc-de-001.nyako.app, затем 002 и т.д.
+      pattern: yc-de-{sequence:03d}.nyako.app
+      # Cloudflare: nyako.app -> Overview -> Zone ID.
+      cloudflare_zone_id: replace-with-cloudflare-zone-id
     remnawave:
-      panel: primary
-      host_id: replace-me
+      panel: primary                    # Ссылка на providers.remnawave.primary.
+      # UUID конкретного Host. Это не Node UUID и не config-profile UUID.
+      host_id: replace-with-remnawave-host-uuid
+      # Эти поля Host получат новый CDN-домен при ротации.
       update_fields: [address, sni, host]
     transport:
       port: 443
+      # Точно тот же XHTTP path, что в inbound и клиентской ссылке.
       path: /content/sec.mp4/
+      # Ожидаемые ответы нашей схемы: обычный корень 200, XHTTP GET 400.
       expected_root_status: 200
       expected_path_status: 400
     rotation:
+      # При 700 GiB создать сертификат, DNS и резервный CDN.
       prepare_at_gib: 700
+      # При 800 GiB переключить Remnawave Host на готовый резерв.
       switch_at_gib: 800
       technical_failures_before_prepare: 3
     monitoring:
+      # Необязательно: отдельный Uptime Kuma Push URL для этой цели.
       uptime_kuma_push_url: ""
-

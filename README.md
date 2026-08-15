@@ -27,6 +27,40 @@ docker compose up -d
 
 Не выключайте `DRY_RUN`, пока не проверены конфигурация, импорт существующего ресурса и staging-ротация.
 
+## Что записывать в config.yml
+
+Для текущей схемы `nyako.app` основа цели уже заполнена в `config.example.yml`. Заменить нужно
+только значения `replace-with-*`, числовой ID origin group и адрес панели:
+
+| Параметр | Что это | Где взять |
+|---|---|---|
+| `providers.remnawave.primary.base_url` | URL панели Remnawave | Например `https://panel.example.com`, без `/` в конце |
+| `folder_id` | Каталог Yandex Cloud для сертификатов и CDN | Открыть каталог Yandex Cloud → «Обзор» → «ID каталога» |
+| `origin_group_id` | Существующая группа источников CDN | Cloud CDN → «Группы источников» → открыть группу, ведущую на `dewl.nyako.app` |
+| `origin_host_header` | Настоящий домен origin-сервера | Для нашей ноды: `dewl.nyako.app` |
+| `cloudflare_zone_id` | ID зоны `nyako.app` | Cloudflare → `nyako.app` → Overview → Zone ID |
+| `host_id` | UUID редактируемого Remnawave Host | Панель Remnawave → Hosts; это не Node UUID |
+| `pattern` | Шаблон новых CDN-доменов | `yc-de-{sequence:03d}.nyako.app` создаст `yc-de-001...`, `002...` |
+| `path` | XHTTP path | Должен совпадать с inbound и ссылкой: `/content/sec.mp4/` |
+
+`origin_group_id` нельзя заменить ID существующего CDN-ресурса. Контроллер создаёт новые
+CDN-ресурсы, но подключает каждый из них к одной существующей origin group.
+
+## Что записывать в .env
+
+| Переменная | Значение |
+|---|---|
+| `YANDEX_API_KEY` | API key отдельного сервисного аккаунта Yandex Cloud |
+| `CLOUDFLARE_API_TOKEN` | Token с правом `Zone / DNS / Edit` только для `nyako.app` |
+| `REMNAWAVE_PRIMARY_TOKEN` | API token панели Remnawave |
+| `CONTROLLER_TOKEN` | Случайная строка из `openssl rand -hex 32` |
+| `TELEGRAM_BOT_TOKEN` | Токен, выданный `@BotFather` |
+| `TELEGRAM_ALLOWED_USER_IDS` | Кто может выполнять команды, Telegram user ID через запятую |
+| `TELEGRAM_CHAT_IDS` | Куда отправлять уведомления, chat ID через запятую |
+
+`CONFIG_PATH` и `DATABASE_PATH` при Docker Compose менять не требуется. Пока `DRY_RUN=true`,
+контроллер не изменяет Yandex, Cloudflare и Remnawave.
+
 ## Импорт существующего CDN
 
 ```bash
@@ -68,4 +102,3 @@ long polling. Есть `/status`, `/traffic`, `/prepare`, `/rotate`, `/rollback`
 режимом сохраните read-only ответы Certificate Manager, CDN Resource и Remnawave Host как fixtures
 и прогоните contract tests. Любая неизвестная форма ответа приводит к fail-closed, а не к смене
 состояния поколения.
-
