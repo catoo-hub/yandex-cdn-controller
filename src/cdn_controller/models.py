@@ -58,7 +58,7 @@ class RemnawaveTarget(BaseModel):
 
 class TransportConfig(BaseModel):
     port: int = 443
-    path: str
+    path: str = "/"
     expected_root_status: int = 200
     expected_path_status: int = 400
     healthcheck_mode: str = "http"

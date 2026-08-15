@@ -88,6 +88,19 @@ async def test_provider_only_health_marks_suspended_resource_administrative():
     assert health.administrative is True
 
 
+def test_provider_only_transport_does_not_require_http_path_or_statuses():
+    target = AppConfig.model_validate({
+        "targets": [{
+            "id": "direct", "yandex": {"folder_id": "folder", "origin_group_id": 42,
+            "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+            "transport": {"healthcheck_mode": "provider_only"},
+            "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 600},
+        }]
+    }).target("direct")
+    assert target.transport.path == "/"
+    assert target.transport.healthcheck_mode == "provider_only"
+
+
 @pytest.mark.asyncio
 async def test_dry_run_rotation_never_changes_active_generation(tmp_path):
     config = AppConfig.model_validate({
