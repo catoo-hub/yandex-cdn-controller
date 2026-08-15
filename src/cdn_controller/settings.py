@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     controller_token: str = ""
     controller_url: str = "http://127.0.0.1:9187"
 
-    yandex_api_key: str = ""
+    yandex_authorized_key_file: str = "/run/secrets/yandex-authorized-key.json"
     cloudflare_api_token: str = ""
 
     telegram_bot_token: str = ""
@@ -29,4 +29,3 @@ class Settings(BaseSettings):
     @property
     def chat_ids(self) -> set[int]:
         return {int(item.strip()) for item in self.telegram_chat_ids.split(",") if item.strip()}
-

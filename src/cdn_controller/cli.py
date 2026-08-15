@@ -19,7 +19,14 @@ async def execute(args) -> None:
     try:
         if args.command == "validate":
             target = config.target(args.target) if args.target else None
-            print(json.dumps({"valid": True, "target": target.model_dump() if target else None}, indent=2))
+            if not settings.dry_run:
+                await controller.yandex.auth.validate(exchange_token=True)
+            print(json.dumps({
+                "valid": True,
+                "dry_run": settings.dry_run,
+                "yandex_iam": "not-checked-in-dry-run" if settings.dry_run else "ok",
+                "target": target.model_dump() if target else None,
+            }, indent=2))
         elif args.command == "status":
             print(json.dumps(await controller.status(), indent=2, default=str))
         elif args.command == "reconcile":
@@ -74,4 +81,3 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     asyncio.run(execute(parser().parse_args()))
-

@@ -32,7 +32,7 @@ class Controller:
         self.config = config
         self.settings = settings
         self.db = db
-        self.yandex = YandexClient(settings.yandex_api_key)
+        self.yandex = YandexClient(settings.yandex_authorized_key_file, required=not settings.dry_run)
         self.cloudflare = CloudflareClient(settings.cloudflare_api_token)
         self.notifier = Notifier(db, settings, config.notification_dedup_seconds)
         self.running = False

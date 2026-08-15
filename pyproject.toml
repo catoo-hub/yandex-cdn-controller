@@ -8,6 +8,7 @@ dependencies = [
   "aiosqlite>=0.20,<1",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
+  "PyJWT[crypto]>=2.10,<3",
   "prometheus-client>=0.21,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
@@ -35,4 +36,3 @@ packages = ["src/cdn_controller"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-

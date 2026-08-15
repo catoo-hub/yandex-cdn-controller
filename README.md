@@ -50,7 +50,7 @@ CDN-ресурсы, но подключает каждый из них к одн
 
 | Переменная | Значение |
 |---|---|
-| `YANDEX_API_KEY` | API key отдельного сервисного аккаунта Yandex Cloud |
+| `YANDEX_AUTHORIZED_KEY_FILE` | Путь внутри контейнера: `/run/secrets/yandex-authorized-key.json` |
 | `CLOUDFLARE_API_TOKEN` | Token с правом `Zone / DNS / Edit` только для `nyako.app` |
 | `REMNAWAVE_PRIMARY_TOKEN` | API token панели Remnawave |
 | `CONTROLLER_TOKEN` | Случайная строка из `openssl rand -hex 32` |
@@ -60,6 +60,34 @@ CDN-ресурсы, но подключает каждый из них к одн
 
 `CONFIG_PATH` и `DATABASE_PATH` при Docker Compose менять не требуется. Пока `DRY_RUN=true`,
 контроллер не изменяет Yandex, Cloudflare и Remnawave.
+
+### Авторизованный ключ Yandex на сервере
+
+Cloud CDN и Certificate Manager не принимают обычный `Api-Key`. Контроллер использует JSON
+авторизованного RSA-ключа для выпуска JWT и автоматически обменивает его на IAM token.
+
+В каталоге клонированного репозитория на сервере выполните:
+
+```bash
+mkdir -p secrets
+chmod 700 secrets
+install -o 10001 -g 10001 -m 600 \
+  /путь/к/authorized_key.json \
+  secrets/yandex-authorized-key.json
+```
+
+Файл монтируется Compose в controller как read-only. Он исключён через `.gitignore`; Telegram-контейнер
+его не получает. Сервисному аккаунту в каталоге нужны роли `cdn.editor`,
+`certificate-manager.editor` и `monitoring.viewer`.
+
+Проверка владельца и режима на сервере:
+
+```bash
+stat -c '%a %u:%g %n' secrets/yandex-authorized-key.json
+```
+
+Ожидается `600 10001:10001`. При `DRY_RUN=false` команда `cdnctl validate` подписывает JWT и
+проверяет получение IAM token, но не создаёт и не изменяет облачные ресурсы.
 
 ## Импорт существующего CDN
 

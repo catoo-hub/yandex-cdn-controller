@@ -2,7 +2,7 @@ import pytest
 import respx
 from httpx import Response
 
-from cdn_controller.clients import YandexClient, webhook_signature
+from cdn_controller.clients import YandexClient, YandexIamAuth, webhook_signature
 from cdn_controller.models import TargetConfig
 
 
@@ -24,7 +24,7 @@ async def test_yandex_create_resource_uses_current_nested_schema():
         "remnawave": {"panel": "primary", "host_id": "h"},
         "transport": {"path": "/x/"},
     })
-    client = YandexClient("key")
+    client = YandexClient("", required=False)
     try:
         await client.create_resource(target, "yc-001.example.com", "cert-1", "idem")
     finally:
@@ -33,3 +33,23 @@ async def test_yandex_create_resource_uses_current_nested_schema():
     assert '"origin":{"originGroupId":"42"}' in body
     assert '"data":{"cm":{"id":"cert-1"}}' in body
     assert '"disableCache":{"enabled":true,"value":true}' in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_authorized_key_is_exchanged_and_cached(tmp_path, monkeypatch):
+    key_file = tmp_path / "key.json"
+    key_file.write_text(
+        '{"id":"key-id","service_account_id":"sa-id","private_key":"secret"}', encoding="utf-8"
+    )
+    monkeypatch.setattr("cdn_controller.clients.jwt.encode", lambda *args, **kwargs: "signed-jwt")
+    route = respx.post("https://iam.api.cloud.yandex.net/iam/v1/tokens").mock(
+        return_value=Response(200, json={"iamToken": "iam-token", "expiresAt": "2099-01-01T00:00:00Z"})
+    )
+    auth = YandexIamAuth(str(key_file))
+    try:
+        assert await auth.headers() == {"Authorization": "Bearer iam-token"}
+        assert await auth.headers() == {"Authorization": "Bearer iam-token"}
+    finally:
+        await auth.close()
+    assert route.call_count == 1

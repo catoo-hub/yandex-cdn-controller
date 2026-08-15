@@ -6,6 +6,7 @@ services:
     env_file: [.env]
     volumes:
       - ./config.yml:/app/config.yml:ro
+      - ./secrets/yandex-authorized-key.json:/run/secrets/yandex-authorized-key.json:ro
       - controller-data:/data
     ports:
       - "127.0.0.1:${CONTROLLER_PORT:-9187}:9187"

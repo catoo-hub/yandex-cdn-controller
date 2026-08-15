@@ -7,9 +7,11 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
+import jwt
 
 from .models import TargetConfig
 
@@ -22,15 +24,88 @@ class ProviderError(RuntimeError):
         self.body = body[:1000]
 
 
+class YandexIamAuth:
+    AUDIENCE = "https://iam.api.cloud.yandex.net/iam/v1/tokens"
+
+    def __init__(self, key_file: str, required: bool = True):
+        self.key_file = key_file
+        self.required = required
+        self._key: dict[str, str] | None = None
+        self._token = ""
+        self._expires_at = 0.0
+        self._lock = asyncio.Lock()
+        self._http = httpx.AsyncClient(timeout=30)
+
+    def _load_key(self) -> dict[str, str]:
+        if self._key is not None:
+            return self._key
+        path = Path(self.key_file)
+        if not path.is_file():
+            if self.required:
+                raise ProviderError("yandex-iam", f"authorized key file not found: {path}")
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProviderError("yandex-iam", f"cannot read authorized key: {exc}") from exc
+        missing = {"id", "service_account_id", "private_key"} - payload.keys()
+        if missing:
+            raise ProviderError("yandex-iam", f"authorized key is missing: {', '.join(sorted(missing))}")
+        self._key = payload
+        return payload
+
+    async def headers(self) -> dict[str, str]:
+        if self._token and time.time() < self._expires_at - 300:
+            return {"Authorization": f"Bearer {self._token}"}
+
+        async with self._lock:
+            if self._token and time.time() < self._expires_at - 300:
+                return {"Authorization": f"Bearer {self._token}"}
+            key = self._load_key()
+            if not key:
+                return {}
+            now = int(time.time())
+            assertion = jwt.encode(
+                {"aud": self.AUDIENCE, "iss": key["service_account_id"], "iat": now, "exp": now + 3600},
+                key["private_key"], algorithm="PS256", headers={"kid": key["id"]},
+            )
+            try:
+                response = await self._http.post(self.AUDIENCE, json={"jwt": assertion})
+                response.raise_for_status()
+                result = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise ProviderError("yandex-iam", f"IAM token exchange failed: {exc}") from exc
+            token = result.get("iamToken")
+            if not token:
+                raise ProviderError("yandex-iam", "IAM response has no iamToken")
+            self._token = token
+            # IAM tokens live up to 12h; refresh hourly even if expiresAt parsing changes.
+            self._expires_at = time.time() + 3600
+            return {"Authorization": f"Bearer {self._token}"}
+
+    async def validate(self, exchange_token: bool = True) -> None:
+        self._load_key()
+        if exchange_token:
+            await self.headers()
+
+    async def close(self) -> None:
+        await self._http.aclose()
+
+
 class JsonClient:
-    def __init__(self, provider: str, base_url: str, headers: dict[str, str], timeout: float = 30):
+    def __init__(self, provider: str, base_url: str, headers: dict[str, str], timeout: float = 30,
+                 auth_headers=None):
         self.provider = provider
         self.client = httpx.AsyncClient(base_url=base_url, headers=headers, timeout=timeout)
+        self.auth_headers = auth_headers
 
     async def request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(4):
             try:
+                if self.auth_headers:
+                    supplied = dict(kwargs.pop("headers", {}) or {})
+                    kwargs["headers"] = {**await self.auth_headers(), **supplied}
                 response = await self.client.request(method, path, **kwargs)
                 if response.status_code in {429, 500, 502, 503, 504} and attempt < 3:
                     await asyncio.sleep(2 ** attempt)
@@ -55,12 +130,13 @@ class YandexClient:
     MONITORING = "https://monitoring.api.cloud.yandex.net"
     OPERATIONS = "https://operation.api.cloud.yandex.net"
 
-    def __init__(self, api_key: str):
-        headers = {"Authorization": f"Api-Key {api_key}", "Content-Type": "application/json"}
-        self.cdn = JsonClient("yandex-cdn", self.CDN, headers)
-        self.cert = JsonClient("yandex-certificate-manager", self.CERT, headers)
-        self.monitoring = JsonClient("yandex-monitoring", self.MONITORING, headers)
-        self.operations = JsonClient("yandex-operations", self.OPERATIONS, headers)
+    def __init__(self, authorized_key_file: str, required: bool = True):
+        self.auth = YandexIamAuth(authorized_key_file, required=required)
+        headers = {"Content-Type": "application/json"}
+        self.cdn = JsonClient("yandex-cdn", self.CDN, headers, auth_headers=self.auth.headers)
+        self.cert = JsonClient("yandex-certificate-manager", self.CERT, headers, auth_headers=self.auth.headers)
+        self.monitoring = JsonClient("yandex-monitoring", self.MONITORING, headers, auth_headers=self.auth.headers)
+        self.operations = JsonClient("yandex-operations", self.OPERATIONS, headers, auth_headers=self.auth.headers)
 
     async def create_certificate(self, folder_id: str, fqdn: str, idempotency_key: str) -> dict:
         payload = {
@@ -144,7 +220,9 @@ class YandexClient:
         return current
 
     async def close(self) -> None:
-        await asyncio.gather(self.cdn.close(), self.cert.close(), self.monitoring.close(), self.operations.close())
+        await asyncio.gather(
+            self.cdn.close(), self.cert.close(), self.monitoring.close(), self.operations.close(), self.auth.close()
+        )
 
 
 class CloudflareClient:
