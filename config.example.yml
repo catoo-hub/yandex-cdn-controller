@@ -1,0 +1,38 @@
+poll_interval_seconds: 300
+notification_dedup_seconds: 1800
+drain_hours: 24
+providers:
+  remnawave:
+    primary:
+      base_url: https://panel.example.com
+      token_env: REMNAWAVE_PRIMARY_TOKEN
+      host_endpoint: /api/hosts/{host_id}
+
+targets:
+  - id: de-main
+    enabled: true
+    yandex:
+      folder_id: replace-me
+      origin_group_id: 123456
+      origin_protocol: HTTPS
+      origin_host_header: origin.example.com
+    domain:
+      zone: example.com
+      pattern: yc-de-{sequence:03d}.example.com
+      cloudflare_zone_id: replace-me
+    remnawave:
+      panel: primary
+      host_id: replace-me
+      update_fields: [address, sni, host]
+    transport:
+      port: 443
+      path: /content/sec.mp4/
+      expected_root_status: 200
+      expected_path_status: 400
+    rotation:
+      prepare_at_gib: 700
+      switch_at_gib: 800
+      technical_failures_before_prepare: 3
+    monitoring:
+      uptime_kuma_push_url: ""
+

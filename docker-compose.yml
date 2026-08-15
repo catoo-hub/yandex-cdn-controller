@@ -1,0 +1,37 @@
+services:
+  controller:
+    build: .
+    command: ["controller"]
+    restart: unless-stopped
+    env_file: [.env]
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - controller-data:/data
+    ports:
+      - "127.0.0.1:${CONTROLLER_PORT:-9187}:9187"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9187/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  telegram-bot:
+    build: .
+    command: ["telegram"]
+    restart: unless-stopped
+    depends_on:
+      controller:
+        condition: service_healthy
+    environment:
+      CONTROLLER_URL: http://controller:9187
+      CONTROLLER_TOKEN: ${CONTROLLER_TOKEN}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS}
+      TELEGRAM_CHAT_IDS: ${TELEGRAM_CHAT_IDS}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+volumes:
+  controller-data:
