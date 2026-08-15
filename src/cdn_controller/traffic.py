@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 
+def normalize_timestamp(value: float) -> float:
+    """Normalize Unix timestamps expressed in seconds, milliseconds, microseconds or nanoseconds."""
+    result = float(value)
+    while abs(result) >= 100_000_000_000:
+        result /= 1000.0
+    return result
+
+
 def integrate_rate_series(timestamps: list[float], values: list[float], after: float | None = None) -> tuple[float, float | None]:
     """Integrate bytes/second samples using trapezoids, excluding already processed timestamps."""
-    all_points = sorted((float(ts), float(value)) for ts, value in zip(timestamps, values) if value is not None)
+    all_points = sorted(
+        (normalize_timestamp(ts), float(value))
+        for ts, value in zip(timestamps, values) if value is not None
+    )
+    after = normalize_timestamp(after) if after is not None else None
     if after is None:
         points = all_points
     else:

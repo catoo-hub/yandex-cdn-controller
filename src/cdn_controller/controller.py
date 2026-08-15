@@ -21,7 +21,7 @@ from .metrics import (
 from .models import AppConfig, Generation, RotationState, TargetConfig
 from .notifications import Event, Notifier
 from .settings import Settings
-from .traffic import extract_series, integrate_rate_series
+from .traffic import extract_series, integrate_rate_series, normalize_timestamp
 
 log = logging.getLogger(__name__)
 GIB = 1024 ** 3
@@ -50,9 +50,22 @@ class Controller:
         self.running = True
         while self.running:
             started = time.monotonic()
-            await asyncio.gather(*(self.reconcile(target.id) for target in self.config.targets if target.enabled))
-            await self.deactivate_drained()
-            self.scheduler_heartbeat = time.time()
+            results = await asyncio.gather(
+                *(self.reconcile(target.id) for target in self.config.targets if target.enabled),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    log.error(
+                        "Unhandled reconcile error; scheduler will continue",
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
+            try:
+                await self.deactivate_drained()
+            except Exception:
+                log.exception("Failed to deactivate drained resources; scheduler will continue")
+            finally:
+                self.scheduler_heartbeat = time.time()
             elapsed = time.monotonic() - started
             await asyncio.sleep(max(1, self.config.poll_interval_seconds - elapsed))
 
@@ -105,13 +118,14 @@ class Controller:
             self._publish_generation(target, generation)
             return generation
         end = datetime.now(UTC)
-        start = datetime.fromtimestamp(generation.last_metric_ts, UTC) - timedelta(minutes=10) \
+        checkpoint = normalize_timestamp(generation.last_metric_ts) if generation.last_metric_ts else None
+        start = datetime.fromtimestamp(checkpoint, UTC) - timedelta(minutes=10) \
             if generation.last_metric_ts else max(datetime.fromtimestamp(generation.created_at, UTC), end - timedelta(days=30))
         payload = await self.yandex.read_bytes_sent(
             target.yandex.folder_id, generation.resource_id, start.isoformat(), end.isoformat()
         )
         timestamps, values = extract_series(payload)
-        increment, checkpoint = integrate_rate_series(timestamps, values, generation.last_metric_ts)
+        increment, checkpoint = integrate_rate_series(timestamps, values, checkpoint)
         generation = await self.db.update_generation(
             generation.id, bytes_sent=generation.bytes_sent + increment, last_metric_ts=checkpoint
         )

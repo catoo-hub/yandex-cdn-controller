@@ -54,7 +54,8 @@ def create_app(controller: Controller, config: AppConfig, settings: Settings) ->
     @app.get("/readyz")
     async def readyz():
         heartbeat_age = time.time() - controller.scheduler_heartbeat if controller.scheduler_heartbeat else None
-        ready = controller.running and (heartbeat_age is None or heartbeat_age < config.poll_interval_seconds * 3)
+        ready = controller.running and heartbeat_age is not None \
+            and heartbeat_age < config.poll_interval_seconds * 3
         return JSONResponse({"status": "ready" if ready else "not-ready", "heartbeat_age": heartbeat_age},
                             status_code=200 if ready else 503)
 
@@ -120,4 +121,3 @@ def create_app(controller: Controller, config: AppConfig, settings: Settings) ->
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
     return app
-
