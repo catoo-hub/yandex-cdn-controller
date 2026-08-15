@@ -1,4 +1,5 @@
-from cdn_controller.telegram_bot import format_status
+from cdn_controller.settings import Settings
+from cdn_controller.telegram_bot import format_location, format_status
 
 
 def test_status_format():
@@ -10,3 +11,8 @@ def test_status_format():
     assert "yc-de-001.example.com" in text
     assert "1.00 GiB" in text
 
+
+def test_topic_map_and_location():
+    settings = Settings(telegram_topic_map="-100123:42,-100456:7")
+    assert settings.topic_map == {-100123: 42, -100456: 7}
+    assert format_location(-100123, 42) == "chat_id: -100123\nmessage_thread_id: 42"

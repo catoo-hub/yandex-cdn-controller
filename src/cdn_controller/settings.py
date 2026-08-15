@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_allowed_user_ids: str = ""
     telegram_chat_ids: str = ""
+    telegram_topic_map: str = ""
 
     uptime_kuma_push_url: str = ""
     generic_webhook_url: str = ""
@@ -29,3 +30,17 @@ class Settings(BaseSettings):
     @property
     def chat_ids(self) -> set[int]:
         return {int(item.strip()) for item in self.telegram_chat_ids.split(",") if item.strip()}
+
+    @property
+    def topic_map(self) -> dict[int, int]:
+        """Parse chat_id:message_thread_id pairs separated by commas."""
+        result: dict[int, int] = {}
+        for item in self.telegram_topic_map.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            chat_id, separator, thread_id = item.partition(":")
+            if not separator:
+                raise ValueError("TELEGRAM_TOPIC_MAP entries must use chat_id:message_thread_id")
+            result[int(chat_id.strip())] = int(thread_id.strip())
+        return result

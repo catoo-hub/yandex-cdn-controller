@@ -57,6 +57,7 @@ CDN-ресурсы, но подключает каждый из них к одн
 | `TELEGRAM_BOT_TOKEN` | Токен, выданный `@BotFather` |
 | `TELEGRAM_ALLOWED_USER_IDS` | Кто может выполнять команды, Telegram user ID через запятую |
 | `TELEGRAM_CHAT_IDS` | Куда отправлять уведомления, chat ID через запятую |
+| `TELEGRAM_TOPIC_MAP` | Необязательные пары `chat_id:message_thread_id` для уведомлений в топики |
 
 `CONFIG_PATH` и `DATABASE_PATH` при Docker Compose менять не требуется. Пока `DRY_RUN=true`,
 контроллер не изменяет Yandex, Cloudflare и Remnawave.
@@ -123,6 +124,20 @@ generic webhook и JSON logs в stdout.
 Заполните `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` и `TELEGRAM_CHAT_IDS`. Бот использует
 long polling. Есть `/status`, `/traffic`, `/prepare`, `/rotate`, `/rollback`, `/pause`, `/resume` и
 `/recheck`. `/cleanup` намеренно показывает preview; необратимое удаление остаётся за оператором.
+
+### Telegram Forum Topics
+
+Добавьте бота в группу с включёнными темами, откройте нужный топик и отправьте `/whereami`. Бот
+вернёт `chat_id` и `message_thread_id`. Для автоматических уведомлений заполните:
+
+```dotenv
+TELEGRAM_CHAT_IDS=-1001234567890
+TELEGRAM_TOPIC_MAP=-1001234567890:42
+```
+
+Для нескольких групп/топиков пары разделяются запятыми. Команды, отправленные непосредственно в
+топике, получают ответ в том же топике автоматически. Если для `chat_id` нет записи в
+`TELEGRAM_TOPIC_MAP`, уведомление отправляется в основной чат.
 
 ## Проверка контрактов API
 

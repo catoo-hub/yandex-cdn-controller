@@ -49,9 +49,13 @@ class Notifier:
         async with httpx.AsyncClient(timeout=10) as client:
             for chat_id in self.settings.chat_ids:
                 try:
+                    payload = {"chat_id": chat_id, "text": text}
+                    thread_id = self.settings.topic_map.get(chat_id)
+                    if thread_id is not None:
+                        payload["message_thread_id"] = thread_id
                     response = await client.post(
                         f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage",
-                        json={"chat_id": chat_id, "text": text},
+                        json=payload,
                     )
                     response.raise_for_status()
                     TELEGRAM_NOTIFICATIONS.labels(event.severity, "success").inc()

@@ -61,6 +61,10 @@ def format_status(payload: dict, target_filter: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def format_location(chat_id: int, thread_id: int | None) -> str:
+    return f"chat_id: {chat_id}\nmessage_thread_id: {thread_id if thread_id is not None else 'none'}"
+
+
 async def run_bot(settings: Settings) -> None:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is empty")
@@ -87,9 +91,15 @@ async def run_bot(settings: Settings) -> None:
         if not allowed(message.from_user.id if message.from_user else None):
             return await deny(message)
         await message.answer(
-            "/status /targets /target ID /traffic ID /history ID /alerts\n"
+            "/status /targets /target ID /traffic ID /history ID /alerts /whereami\n"
             "/prepare ID /rotate ID /pause ID /resume ID /recheck ID /rollback ID /cleanup ID"
         )
+
+    @router.message(Command("whereami"))
+    async def whereami_command(message: Message):
+        if not allowed(message.from_user.id if message.from_user else None):
+            return await deny(message)
+        await message.answer(format_location(message.chat.id, message.message_thread_id))
 
     @router.message(Command("status", "targets"))
     async def status_command(message: Message):
