@@ -3,7 +3,7 @@ import respx
 from httpx import Response
 
 from cdn_controller.clients import (
-    CloudflareClient, RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature,
+    CloudflareClient, ProviderError, RemnawaveClient, YandexClient, YandexIamAuth, webhook_signature,
 )
 
 
@@ -26,6 +26,12 @@ from cdn_controller.models import TargetConfig
 
 def test_webhook_signature_is_stable():
     assert webhook_signature("secret", b"body") == "dc46983557fea127b43af721467eb9b3fde2338fe3e14f51952aa8478c13d355"
+
+
+def test_provider_error_includes_bounded_response_body():
+    error = ProviderError("yandex-cdn", "HTTP 400", 400, '{"message":"invalid field"}')
+    assert str(error) == 'yandex-cdn: HTTP 400; response={"message":"invalid field"}'
+    assert error.body == '{"message":"invalid field"}'
 
 
 @pytest.mark.asyncio

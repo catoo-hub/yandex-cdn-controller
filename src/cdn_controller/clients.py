@@ -18,10 +18,12 @@ from .models import TargetConfig
 
 class ProviderError(RuntimeError):
     def __init__(self, provider: str, message: str, status_code: int | None = None, body: str = ""):
-        super().__init__(f"{provider}: {message}")
+        body = body[:1000].strip()
+        detail = f"; response={body}" if body else ""
+        super().__init__(f"{provider}: {message}{detail}")
         self.provider = provider
         self.status_code = status_code
-        self.body = body[:1000]
+        self.body = body
 
 
 class YandexIamAuth:
