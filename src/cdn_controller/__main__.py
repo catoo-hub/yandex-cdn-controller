@@ -30,6 +30,10 @@ def configure_logging() -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    # httpx logs full request URLs. Telegram embeds the bot token in its URL,
+    # so INFO request logging would disclose the credential to stdout/log collectors.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def main() -> None:
