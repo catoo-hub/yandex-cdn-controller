@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,14 @@ class YandexClient:
     MONITORING = "https://monitoring.api.cloud.yandex.net"
     OPERATIONS = "https://operation.api.cloud.yandex.net"
 
+    @staticmethod
+    def _idempotency_key(value: str) -> str:
+        """Return the supplied UUID or a stable UUID derived from a logical key."""
+        try:
+            return str(uuid.UUID(value))
+        except ValueError:
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, f"yandex-cdn-controller:{value}"))
+
     def __init__(self, authorized_key_file: str, required: bool = True):
         self.auth = YandexIamAuth(authorized_key_file, required=required)
         headers = {"Content-Type": "application/json"}
@@ -150,7 +159,7 @@ class YandexClient:
         }
         return await self.cert.request(
             "POST", "/certificate-manager/v1/certificates/requestNew", json=payload,
-            headers={"Idempotency-Key": idempotency_key},
+            headers={"Idempotency-Key": self._idempotency_key(idempotency_key)},
         )
 
     async def get_certificate(self, certificate_id: str) -> dict:
@@ -187,7 +196,7 @@ class YandexClient:
         }
         return await self.cdn.request(
             "POST", "/cdn/v1/resources", json=payload,
-            headers={"Idempotency-Key": idempotency_key},
+            headers={"Idempotency-Key": self._idempotency_key(idempotency_key)},
         )
 
     async def get_resource(self, resource_id: str) -> dict:

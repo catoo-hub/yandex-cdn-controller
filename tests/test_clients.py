@@ -1,5 +1,6 @@
 import pytest
 import respx
+import uuid
 from httpx import Response
 
 from cdn_controller.clients import (
@@ -47,7 +48,9 @@ async def test_certificate_request_uses_documented_rest_path():
     finally:
         await client.close()
     assert route.called
-    assert route.calls[0].request.headers["Idempotency-Key"] == "idem"
+    key = route.calls[0].request.headers["Idempotency-Key"]
+    assert str(uuid.UUID(key)) == key
+    assert key == YandexClient._idempotency_key("idem")
 
 
 @pytest.mark.asyncio
@@ -73,6 +76,14 @@ async def test_yandex_create_resource_uses_current_nested_schema():
     assert '"origin":{"originGroupId":"42"}' in body
     assert '"data":{"cm":{"id":"cert-1"}}' in body
     assert '"disableCache":{"enabled":true,"value":true}' in body
+    key = route.calls[0].request.headers["Idempotency-Key"]
+    assert str(uuid.UUID(key)) == key
+    assert key == YandexClient._idempotency_key("idem")
+
+
+def test_yandex_idempotency_key_preserves_existing_uuid():
+    key = "87bd3ac8-35f9-40e9-967a-8d8161ce0683"
+    assert YandexClient._idempotency_key(key) == key
 
 
 @pytest.mark.asyncio
