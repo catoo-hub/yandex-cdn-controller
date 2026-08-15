@@ -87,7 +87,9 @@ class Controller:
                     reserve = await self.prepare(target_id, actor="technical-health", lock_held=True)
                 if active.bytes_sent >= prepare and not reserve:
                     reserve = await self.prepare(target_id, actor=actor, lock_held=True)
-                if active.bytes_sent >= threshold and reserve and reserve.state == RotationState.READY:
+                simulated = bool(reserve and reserve.metadata.get("rotation_simulated"))
+                if (active.bytes_sent >= threshold and reserve and reserve.state == RotationState.READY
+                        and not (self.settings.dry_run and simulated)):
                     await self.rotate(target_id, actor=actor, lock_held=True)
             return {"target": target_id, "status": "ok", "active": active.model_dump() if active else None,
                     "reserve": reserve.model_dump() if reserve else None}
@@ -243,31 +245,45 @@ class Controller:
                 raise RuntimeError("no READY reserve")
             if active and active.state == RotationState.ATTENTION:
                 raise RuntimeError("administratively restricted target requires manual investigation")
-            await self.backup_database()
             if self.settings.dry_run:
-                previous = {"address": active.fqdn if active else None}
-            else:
-                provider = self.config.providers.remnawave[target.remnawave.panel]
-                client = remnawave_client(provider, provider.token_env)
-                try:
-                    previous = await client.get_host(target.remnawave.host_id)
-                    await client.patch_host(target.remnawave.host_id, previous, reserve.fqdn,
-                                            target.remnawave.update_fields)
-                    updated = await client.get_host(target.remnawave.host_id)
-                    for field in target.remnawave.update_fields:
-                        if updated.get(field) != reserve.fqdn:
-                            raise ProviderError("remnawave", f"field {field} was not updated")
-                    health = await check_cdn_health(
-                        reserve.fqdn, target.transport.path,
-                        target.transport.expected_root_status, target.transport.expected_path_status,
-                        target.transport.port,
-                    )
-                    if not health.healthy:
-                        await client.http.request("PATCH", client.path(target.remnawave.host_id), json=previous)
-                        ROTATIONS.labels(target_id, "rollback").inc()
-                        raise ProviderError("health", "post-switch health check failed")
-                finally:
-                    await client.close()
+                reserve = await self.db.update_generation(
+                    reserve.id,
+                    metadata={**reserve.metadata, "rotation_simulated": True, "simulated_at": time.time()},
+                )
+                await self.notifier.emit(Event(
+                    target_id, "INFO", "rotation-dry-run",
+                    f"DRY-RUN: would switch Remnawave from "
+                    f"{active.fqdn if active else 'none'} to {reserve.fqdn}; no state or provider changes made",
+                    dedup_key=f"{target_id}:{reserve.id}:rotation-dry-run", actor=actor,
+                ))
+                return {
+                    "dry_run": True,
+                    "changed": False,
+                    "old": active.fqdn if active else None,
+                    "new": reserve.fqdn,
+                }
+            await self.backup_database()
+            provider = self.config.providers.remnawave[target.remnawave.panel]
+            client = remnawave_client(provider, provider.token_env)
+            try:
+                previous = await client.get_host(target.remnawave.host_id)
+                await client.patch_host(target.remnawave.host_id, previous, reserve.fqdn,
+                                        target.remnawave.update_fields)
+                updated = await client.get_host(target.remnawave.host_id)
+                for field in target.remnawave.update_fields:
+                    if updated.get(field) != reserve.fqdn:
+                        raise ProviderError("remnawave", f"field {field} was not updated")
+                health = await check_cdn_health(
+                    reserve.fqdn, target.transport.path,
+                    target.transport.expected_root_status, target.transport.expected_path_status,
+                    target.transport.port,
+                )
+                if not health.healthy:
+                    await client.http.request("PATCH", client.path(target.remnawave.host_id), json=previous)
+                    ROTATIONS.labels(target_id, "rollback").inc()
+                    raise ProviderError("health", "post-switch health check failed")
+            finally:
+                await client.close()
             drain_after = time.time() + self.config.drain_hours * 3600
             await self.db.activate(target_id, reserve.id, active.id if active else None, drain_after)
             ROTATIONS.labels(target_id, "success").inc()
