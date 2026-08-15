@@ -185,12 +185,14 @@ class YandexClient:
             },
             "options": {
                 "disableCache": {"enabled": True, "value": True},
-                "allowedHttpMethods": {"enabled": True, "value": ["GET", "HEAD"]},
+                "browserCacheSettings": {"enabled": True, "value": "0"},
+                "ignoreCookie": {"enabled": True, "value": False},
+                "allowedHttpMethods": {"enabled": True, "value": ["GET", "HEAD", "OPTIONS"]},
                 "hostOptions": {
                     "host": {"enabled": True, "value": target.yandex.origin_host_header}
                 },
                 "queryParamsOptions": {
-                    "ignoreQueryString": {"enabled": True, "value": False}
+                    "ignoreQueryString": {"enabled": True, "value": True}
                 },
             },
         }

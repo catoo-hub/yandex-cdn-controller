@@ -76,6 +76,10 @@ async def test_yandex_create_resource_uses_current_nested_schema():
     assert '"origin":{"originGroupId":"42"}' in body
     assert '"data":{"cm":{"id":"cert-1"}}' in body
     assert '"disableCache":{"enabled":true,"value":true}' in body
+    assert '"browserCacheSettings":{"enabled":true,"value":"0"}' in body
+    assert '"ignoreCookie":{"enabled":true,"value":false}' in body
+    assert '"allowedHttpMethods":{"enabled":true,"value":["GET","HEAD","OPTIONS"]}' in body
+    assert '"ignoreQueryString":{"enabled":true,"value":true}' in body
     key = route.calls[0].request.headers["Idempotency-Key"]
     assert str(uuid.UUID(key)) == key
     assert key == YandexClient._idempotency_key("idem")
