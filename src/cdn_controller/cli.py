@@ -26,19 +26,21 @@ async def execute(args) -> None:
                 provider_checks["yandex_iam"] = "ok"
                 targets = [target] if target else [item for item in config.targets if item.enabled]
                 for item in targets:
-                    await controller.cloudflare.validate_dns_access(item.domain.cloudflare_zone_id)
-                    remna_provider = config.providers.remnawave[item.remnawave.panel]
-                    remna = remnawave_client(remna_provider, remna_provider.token_env)
-                    try:
-                        host = await remna.get_host(item.remnawave.host_id)
-                    finally:
-                        await remna.close()
-                    if str(host.get("uuid")) != item.remnawave.host_id:
-                        raise RuntimeError(
-                            f"Remnawave returned unexpected Host UUID for target {item.id}"
-                        )
-                    provider_checks[f"cloudflare:{item.id}"] = "dns-access-ok"
-                    provider_checks[f"remnawave:{item.id}"] = "ok"
+                    if item.domain and item.domain.cloudflare_zone_id:
+                        await controller.cloudflare.validate_dns_access(item.domain.cloudflare_zone_id)
+                        provider_checks[f"cloudflare:{item.id}"] = "dns-access-ok"
+                    if item.remnawave:
+                        remna_provider = config.providers.remnawave[item.remnawave.panel]
+                        remna = remnawave_client(remna_provider, remna_provider.token_env)
+                        try:
+                            host = await remna.get_host(item.remnawave.host_id)
+                        finally:
+                            await remna.close()
+                        if str(host.get("uuid")) != item.remnawave.host_id:
+                            raise RuntimeError(
+                                f"Remnawave returned unexpected Host UUID for target {item.id}"
+                            )
+                        provider_checks[f"remnawave:{item.id}"] = "ok"
             print(json.dumps({
                 "valid": True,
                 "dry_run": settings.dry_run,
@@ -54,6 +56,8 @@ async def execute(args) -> None:
             print((await controller.prepare(args.target, "cli")).model_dump_json(indent=2))
         elif args.command == "rotate":
             print(json.dumps(await controller.rotate(args.target, "cli"), indent=2, default=str))
+        elif args.command == "recreate":
+            print((await controller.recreate_in_place(args.target, "cli")).model_dump_json(indent=2))
         elif args.command == "rollback":
             print(json.dumps(await controller.rollback(args.target, "cli"), indent=2))
         elif args.command == "pause":
@@ -84,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("target", nargs="?")
     validate = commands.add_parser("validate")
     validate.add_argument("target", nargs="?")
-    for name in ("prepare", "rotate", "rollback", "pause", "resume", "cleanup"):
+    for name in ("prepare", "rotate", "recreate", "rollback", "pause", "resume", "cleanup"):
         item = commands.add_parser(name)
         item.add_argument("target")
     imported = commands.add_parser("import-existing")

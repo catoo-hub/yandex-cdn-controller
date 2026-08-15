@@ -170,7 +170,7 @@ class YandexClient:
             params={"view": "FULL"},
         )
 
-    async def create_resource(self, target: TargetConfig, fqdn: str, certificate_id: str,
+    async def create_resource(self, target: TargetConfig, fqdn: str, certificate_id: str | None,
                               idempotency_key: str) -> dict:
         payload = {
             "folderId": target.yandex.folder_id,
@@ -179,10 +179,8 @@ class YandexClient:
             "originProtocol": target.yandex.origin_protocol,
             "origin": {"originGroupId": str(target.yandex.origin_group_id)},
             "providerType": "ourcdn",
-            "sslCertificate": {
-                "type": "CM",
-                "data": {"cm": {"id": certificate_id}},
-            },
+            "sslCertificate": ({"type": "CM", "data": {"cm": {"id": certificate_id}}}
+                               if certificate_id else {"type": "DONT_USE"}),
             "options": {
                 "disableCache": {"enabled": True, "value": True},
                 "browserCacheSettings": {"enabled": True, "value": "0"},
@@ -196,6 +194,54 @@ class YandexClient:
                 },
             },
         }
+        return await self.cdn.request(
+            "POST", "/cdn/v1/resources", json=payload,
+            headers={"Idempotency-Key": self._idempotency_key(idempotency_key)},
+        )
+
+    async def delete_resource(self, resource_id: str, idempotency_key: str) -> dict:
+        return await self.cdn.request(
+            "DELETE", f"/cdn/v1/resources/{resource_id}",
+            headers={"Idempotency-Key": self._idempotency_key(idempotency_key)},
+        )
+
+    async def recreate_resource(self, target: TargetConfig, snapshot: dict,
+                                idempotency_key: str) -> dict:
+        """Create a resource from the writable parts of a Resource.Get snapshot."""
+        option_names = {
+            "disableCache", "edgeCacheSettings", "browserCacheSettings", "cacheHttpHeaders",
+            "queryParamsOptions", "slice", "compressionOptions", "redirectOptions", "hostOptions",
+            "staticHeaders", "cors", "stale", "allowedHttpMethods", "proxyCacheMethodsSet",
+            "disableProxyForceRanges", "staticRequestHeaders", "ignoreCookie", "rewrite",
+            "secureKey", "ipAddressAcl", "followRedirects", "websockets", "headerFilter",
+            "geoAcl", "referrerAcl", "staticResponse",
+        }
+        options = {key: value for key, value in (snapshot.get("options") or {}).items()
+                   if key in option_names}
+        ssl = snapshot.get("sslCertificate") or {}
+        ssl_payload = {"type": ssl.get("type", "DONT_USE")}
+        if ssl_payload["type"] == "CM":
+            certificate_id = (((ssl.get("data") or {}).get("cm") or {}).get("id"))
+            if not certificate_id:
+                raise ProviderError("yandex-cdn", "CM certificate snapshot has no id")
+            ssl_payload["data"] = {"cm": {"id": certificate_id}}
+        origin_group_id = snapshot.get("originGroupId") or target.yandex.origin_group_id
+        payload = {
+            "folderId": target.yandex.folder_id,
+            "cname": snapshot["cname"],
+            "active": True,
+            "originProtocol": snapshot.get("originProtocol") or target.yandex.origin_protocol,
+            "origin": {"originGroupId": str(origin_group_id)},
+            "providerType": snapshot.get("providerType") or "ourcdn",
+            "sslCertificate": ssl_payload,
+            "options": options,
+        }
+        if isinstance(snapshot.get("secondaryHostnames"), dict):
+            payload["secondaryHostnames"] = snapshot["secondaryHostnames"]
+        if snapshot.get("labels"):
+            payload["labels"] = snapshot["labels"]
+        if snapshot.get("tls"):
+            payload["tls"] = snapshot["tls"]
         return await self.cdn.request(
             "POST", "/cdn/v1/resources", json=payload,
             headers={"Idempotency-Key": self._idempotency_key(idempotency_key)},

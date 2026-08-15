@@ -1,3 +1,4 @@
+import json
 import pytest
 import respx
 import uuid
@@ -83,6 +84,67 @@ async def test_yandex_create_resource_uses_current_nested_schema():
     key = route.calls[0].request.headers["Idempotency-Key"]
     assert str(uuid.UUID(key)) == key
     assert key == YandexClient._idempotency_key("idem")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_yandex_resource_without_certificate_and_delete_use_uuid_keys():
+    create = respx.post("https://cdn.api.cloud.yandex.net/cdn/v1/resources").mock(
+        return_value=Response(200, json={"id": "create-operation"})
+    )
+    delete = respx.delete("https://cdn.api.cloud.yandex.net/cdn/v1/resources/resource-id").mock(
+        return_value=Response(200, json={"id": "delete-operation"})
+    )
+    target = TargetConfig.model_validate({
+        "id": "direct", "yandex": {"folder_id": "f", "origin_group_id": 42,
+        "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+        "transport": {"path": "/x/"},
+        "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 740},
+    })
+    client = YandexClient("", required=False)
+    try:
+        await client.create_resource(target, "account.yccdn.example", None, "create-logical")
+        await client.delete_resource("resource-id", "delete-logical")
+    finally:
+        await client.close()
+    assert '"sslCertificate":{"type":"DONT_USE"}' in create.calls[0].request.content.decode()
+    assert str(uuid.UUID(create.calls[0].request.headers["Idempotency-Key"]))
+    assert str(uuid.UUID(delete.calls[0].request.headers["Idempotency-Key"]))
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_recreate_resource_copies_writable_snapshot_and_drops_read_only_options():
+    route = respx.post("https://cdn.api.cloud.yandex.net/cdn/v1/resources").mock(
+        return_value=Response(200, json={"id": "operation"})
+    )
+    target = TargetConfig.model_validate({
+        "id": "direct", "yandex": {"folder_id": "f", "origin_group_id": 42,
+        "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+        "transport": {"path": "/x/"},
+        "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 740},
+    })
+    snapshot = {
+        "cname": "resource.example", "originGroupId": "99", "originProtocol": "HTTPS",
+        "providerType": "ourcdn",
+        "sslCertificate": {"type": "CM", "status": "READY", "data": {"cm": {"id": "cert"}}},
+        "options": {
+            "disableCache": {"enabled": True, "value": True},
+            "allowedHttpMethods": {"enabled": True, "value": ["GET", "HEAD", "OPTIONS"]},
+            "customServerName": {"enabled": True, "value": "read-only.example"},
+        },
+    }
+    client = YandexClient("", required=False)
+    try:
+        await client.recreate_resource(target, snapshot, "logical-key")
+    finally:
+        await client.close()
+    body = json.loads(route.calls[0].request.content)
+    assert body["origin"] == {"originGroupId": "99"}
+    assert body["originProtocol"] == "HTTPS"
+    assert body["sslCertificate"] == {"type": "CM", "data": {"cm": {"id": "cert"}}}
+    assert body["options"]["disableCache"]["value"] is True
+    assert "customServerName" not in body["options"]
 
 
 def test_yandex_idempotency_key_preserves_existing_uuid():

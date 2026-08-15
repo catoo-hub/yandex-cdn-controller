@@ -35,13 +35,14 @@ class YandexConfig(BaseModel):
 
 
 class DomainConfig(BaseModel):
-    zone: str
-    pattern: str
-    cloudflare_zone_id: str
+    zone: str = ""
+    pattern: str = ""
+    cloudflare_zone_id: str = ""
+    name: str = ""
 
     @model_validator(mode="after")
     def check_pattern(self):
-        if "{sequence" not in self.pattern:
+        if self.pattern and "{sequence" not in self.pattern:
             raise ValueError("domain.pattern must contain {sequence}")
         return self
 
@@ -70,13 +71,20 @@ class TransportConfig(BaseModel):
 
 
 class RotationConfig(BaseModel):
+    mode: str = "generation"
     prepare_at_gib: float = 700
     switch_at_gib: float = 800
+    recreate_at_gib: float | None = None
     technical_failures_before_prepare: int = 3
 
     @model_validator(mode="after")
     def thresholds(self):
-        if self.prepare_at_gib <= 0 or self.switch_at_gib <= self.prepare_at_gib:
+        if self.mode not in {"generation", "recreate_in_place"}:
+            raise ValueError("rotation.mode must be generation or recreate_in_place")
+        if self.mode == "recreate_in_place":
+            if (self.recreate_at_gib or 0) <= 0:
+                raise ValueError("recreate_at_gib must be positive in recreate_in_place mode")
+        elif self.prepare_at_gib <= 0 or self.switch_at_gib <= self.prepare_at_gib:
             raise ValueError("switch_at_gib must exceed prepare_at_gib")
         return self
 
@@ -89,11 +97,20 @@ class TargetConfig(BaseModel):
     id: str
     enabled: bool = True
     yandex: YandexConfig
-    domain: DomainConfig
-    remnawave: RemnawaveTarget
+    domain: DomainConfig | None = None
+    remnawave: RemnawaveTarget | None = None
     transport: TransportConfig
     rotation: RotationConfig = Field(default_factory=RotationConfig)
     monitoring: MonitoringTarget = Field(default_factory=MonitoringTarget)
+
+    @model_validator(mode="after")
+    def mode_requirements(self):
+        if self.rotation.mode == "generation":
+            if not self.domain or not self.domain.pattern or not self.domain.cloudflare_zone_id:
+                raise ValueError("generation mode requires domain.pattern and cloudflare_zone_id")
+            if not self.remnawave:
+                raise ValueError("generation mode requires remnawave")
+        return self
 
 
 class RemnawaveProvider(BaseModel):
@@ -121,7 +138,7 @@ class AppConfig(BaseModel):
             raise ValueError("target ids must be unique")
         missing = sorted({
             target.remnawave.panel for target in self.targets
-            if target.remnawave.panel not in self.providers.remnawave
+            if target.remnawave and target.remnawave.panel not in self.providers.remnawave
         })
         if missing:
             raise ValueError(f"unknown Remnawave panel(s): {', '.join(missing)}")

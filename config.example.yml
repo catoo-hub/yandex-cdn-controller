@@ -56,3 +56,28 @@ targets:
     monitoring:
       # Необязательно: отдельный Uptime Kuma Push URL для этой цели.
       uptime_kuma_push_url: ""
+
+  # Упрощённый режим: один и тот же CDN пересоздаётся при достижении лимита.
+  # Пользовательский домен, Cloudflare и Remnawave здесь не обязательны.
+  - id: direct-yandex
+    enabled: false
+    yandex:
+      folder_id: replace-with-yandex-folder-id
+      origin_group_id: 123456
+      origin_protocol: HTTP
+      origin_host_header: 203.0.113.10
+    # Если клиенты ходят через свой домен, можно указать только его:
+    # domain:
+    #   name: cdn.example.com
+    # Если domain отсутствует, health-check использует providerCname от Yandex.
+    transport:
+      port: 443
+      path: /api/uploadFile/
+      expected_root_status: 200
+      expected_path_status: 400
+    rotation:
+      mode: recreate_in_place
+      recreate_at_gib: 740
+      technical_failures_before_prepare: 3
+    monitoring:
+      uptime_kuma_push_url: ""

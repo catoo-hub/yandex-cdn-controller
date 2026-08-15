@@ -1,13 +1,15 @@
 # Yandex CDN Controller
 
-Переносимый контроллер поколений Yandex Cloud CDN, Cloudflare DNS, Certificate Manager,
-переключения Remnawave Host, Telegram-команд и мониторинга.
+Переносимый контроллер Yandex Cloud CDN с двумя режимами: поколения с Cloudflare/Certificate
+Manager/Remnawave и пересоздание одного ресурса на месте без обязательного пользовательского домена.
 
 ## Безопасность
 
 - По умолчанию включён `DRY_RUN=true`.
 - HTTP `451` и provider suspension переводят цель в `ATTENTION` и не запускают ротацию.
-- Retired-ресурсы автоматически не удаляются.
+- В режиме поколений retired-ресурсы автоматически не удаляются.
+- `recreate_in_place` удаляет активный ресурс только после достижения `recreate_at_gib` или
+  подтверждённой ручной команды `/recreate`.
 - Telegram доступен только разрешённым user ID; опасные команды требуют подтверждения.
 - Telegram-контейнер не получает provider credentials и Docker socket.
 
@@ -106,6 +108,61 @@ docker compose run --rm controller cli import-existing \
 Yandex хранит доступные для чтения метрики ограниченное время, поэтому при импорте рекомендуется
 передать текущий накопленный lifetime total в байтах через `--bytes-sent`.
 
+## Пересоздание одного CDN на месте
+
+Этот режим подходит, когда служебный `providerCname` Yandex закреплён за аккаунтом и после
+пересоздания остаётся тем же. Новые домены, сертификаты, Cloudflare-записи и изменение Remnawave
+не выполняются.
+
+```yaml
+targets:
+  - id: direct-yandex
+    enabled: true
+    yandex:
+      folder_id: replace-with-yandex-folder-id
+      origin_group_id: 123456
+      origin_protocol: HTTP
+      origin_host_header: 203.0.113.10
+    transport:
+      port: 443
+      path: /api/uploadFile/
+      expected_root_status: 200
+      expected_path_status: 400
+    rotation:
+      mode: recreate_in_place
+      recreate_at_gib: 740
+```
+
+Если клиенты используют пользовательский домен, добавьте только:
+
+```yaml
+domain:
+  name: cdn.example.com
+```
+
+Если `domain` отсутствует, endpoint для health-check берётся из `providerCname` Yandex. При
+пересоздании контроллер читает текущий ресурс, сохраняет его основной `cname` и сертификат (если
+он есть), удаляет ресурс, создаёт его с теми же параметрами и сбрасывает локальный счётчик после
+успешного health-check. Если новый `providerCname` отличается от прежнего, цель переводится в
+`ATTENTION`: DNS автоматически не меняется.
+
+Первичный импорт для прямого служебного домена:
+
+```bash
+docker compose run --rm controller cli import-existing \
+  direct-yandex RESOURCE_ID account-name.topology.gslb.yccdn.ru --bytes-sent 0
+```
+
+Ручной запуск является разрушительной операцией и требует подтверждения в Telegram:
+
+```bash
+docker compose run --rm -e DRY_RUN=false controller cli recreate direct-yandex
+```
+
+В `.env` для такой цели достаточно Yandex credentials; Cloudflare и Remnawave tokens могут быть
+пустыми. Роль `certificate-manager.editor` нужна только тогда, когда используется режим поколений
+или требуется создавать новые сертификаты.
+
 ## Переключение в live
 
 1. Создайте Yandex service account с ролями CDN editor, Certificate Manager editor и Monitoring viewer.
@@ -128,7 +185,7 @@ generic webhook и JSON logs в stdout.
 ## Telegram
 
 Заполните `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS` и `TELEGRAM_CHAT_IDS`. Бот использует
-long polling. Есть `/status`, `/traffic`, `/prepare`, `/rotate`, `/rollback`, `/pause`, `/resume` и
+long polling. Есть `/status`, `/traffic`, `/prepare`, `/rotate`, `/recreate`, `/rollback`, `/pause`, `/resume` и
 `/recheck`. `/cleanup` намеренно показывает preview; необратимое удаление остаётся за оператором.
 
 ### Telegram Forum Topics

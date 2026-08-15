@@ -80,6 +80,10 @@ class Controller:
                 return {"target": target_id, "status": "paused"}
             active, reserve = await self.db.active_and_reserve(target_id)
             if active:
+                recreate = active.metadata.get("recreate")
+                if target.rotation.mode == "recreate_in_place" and recreate:
+                    active = await self.recreate_in_place(target_id, actor=actor, lock_held=True)
+                    return {"target": target_id, "status": "ok", "active": active.model_dump(), "reserve": None}
                 active = await self._refresh_traffic(target, active)
                 health = await check_cdn_health(
                     active.fqdn, target.transport.path,
@@ -92,6 +96,12 @@ class Controller:
                     await self.notifier.emit(Event(target_id, "CRITICAL", "administrative-block",
                                                    f"{active.fqdn} returned HTTP 451; automatic rotation stopped"))
                     return {"target": target_id, "status": "attention"}
+                if target.rotation.mode == "recreate_in_place":
+                    threshold = float(target.rotation.recreate_at_gib) * GIB
+                    await self._traffic_notifications(target, active)
+                    if active.bytes_sent >= threshold:
+                        active = await self.recreate_in_place(target_id, actor=actor, lock_held=True)
+                    return {"target": target_id, "status": "ok", "active": active.model_dump(), "reserve": None}
                 threshold = target.rotation.switch_at_gib * GIB
                 prepare = target.rotation.prepare_at_gib * GIB
                 await self._traffic_notifications(target, active)
@@ -154,11 +164,13 @@ class Controller:
         return failures
 
     async def _traffic_notifications(self, target: TargetConfig, generation: Generation) -> None:
-        switch = target.rotation.switch_at_gib * GIB
+        switch = (float(target.rotation.recreate_at_gib) if target.rotation.mode == "recreate_in_place"
+                  else target.rotation.switch_at_gib) * GIB
         milestones = (
             ("traffic-70", switch * 0.70, "INFO", "70% of switch threshold reached"),
             ("traffic-90", switch * 0.90, "WARNING", "90% of switch threshold reached"),
-            ("traffic-prepare", target.rotation.prepare_at_gib * GIB, "WARNING", "prepare threshold reached"),
+            *(([("traffic-prepare", target.rotation.prepare_at_gib * GIB, "WARNING",
+                  "prepare threshold reached")]) if target.rotation.mode == "generation" else []),
             ("traffic-switch", switch, "CRITICAL", "switch threshold reached"),
         )
         for kind, value, severity, message in milestones:
@@ -172,13 +184,17 @@ class Controller:
     def _publish_generation(self, target: TargetConfig, generation: Generation) -> None:
         BYTES_SENT.labels(target.id, str(generation.sequence)).set(generation.bytes_sent)
         TRAFFIC_RATIO.labels(target.id, str(generation.sequence)).set(
-            generation.bytes_sent / (target.rotation.switch_at_gib * GIB)
+            generation.bytes_sent / ((float(target.rotation.recreate_at_gib)
+                                      if target.rotation.mode == "recreate_in_place"
+                                      else target.rotation.switch_at_gib) * GIB)
         )
         RESOURCE_STATUS.labels(target.id, str(generation.sequence), generation.state.value).set(1)
         ROTATION_STATE.labels(target.id, generation.state.value).set(1)
 
     async def prepare(self, target_id: str, actor: str = "cli", lock_held: bool = False) -> Generation:
         target = self.config.target(target_id)
+        if target.rotation.mode != "generation":
+            raise RuntimeError("prepare is only available in generation mode")
         owner = f"prepare:{uuid.uuid4()}"
         acquired = lock_held or await self.db.acquire_lock(target_id, owner)
         if not acquired:
@@ -269,6 +285,8 @@ class Controller:
 
     async def rotate(self, target_id: str, actor: str = "cli", lock_held: bool = False) -> dict:
         target = self.config.target(target_id)
+        if target.rotation.mode != "generation":
+            raise RuntimeError("rotate is only available in generation mode; use reconcile for recreate_in_place")
         owner = f"rotate:{uuid.uuid4()}"
         acquired = lock_held or await self.db.acquire_lock(target_id, owner)
         if not acquired:
@@ -352,6 +370,114 @@ class Controller:
         await self.notifier.emit(Event(target_id, "WARNING", "rollback-complete",
                                        f"Rolled back to {previous.fqdn}", actor=actor))
         return {"active": previous.fqdn}
+
+    async def recreate_in_place(self, target_id: str, actor: str = "scheduler",
+                                lock_held: bool = False) -> Generation:
+        """Delete and recreate one CDN resource while preserving its public endpoint."""
+        target = self.config.target(target_id)
+        if target.rotation.mode != "recreate_in_place":
+            raise RuntimeError("target is not configured for recreate_in_place")
+        owner = f"recreate:{uuid.uuid4()}"
+        acquired = lock_held or await self.db.acquire_lock(target_id, owner, ttl=3600)
+        if not acquired:
+            raise RuntimeError("target is locked")
+        try:
+            active, _ = await self.db.active_and_reserve(target_id)
+            if not active or not active.resource_id:
+                raise RuntimeError("no active CDN resource to recreate")
+            if active.state == RotationState.ATTENTION:
+                raise RuntimeError("administratively restricted resource cannot be recreated automatically")
+            if self.settings.dry_run:
+                await self.notifier.emit(Event(
+                    target_id, "WARNING", "recreate-dry-run",
+                    f"DRY-RUN: would recreate {active.resource_id} in place", actor=actor,
+                ))
+                return active
+
+            metadata = dict(active.metadata)
+            work = dict(metadata.get("recreate") or {})
+            if not work:
+                resource = await self.yandex.get_resource(active.resource_id)
+                ssl = resource.get("sslCertificate") or {}
+                certificate_id = (((ssl.get("data") or {}).get("cm") or {}).get("id")
+                                  if str(ssl.get("type", "")).upper() == "CM" else None)
+                work = {
+                    "stage": "snapshot",
+                    "old_resource_id": active.resource_id,
+                    "resource_cname": resource.get("cname"),
+                    "certificate_id": certificate_id,
+                    "old_provider_cname": resource.get("providerCname") or active.provider_cname,
+                    "resource_snapshot": resource,
+                    "started_at": time.time(),
+                }
+                if not work["resource_cname"]:
+                    raise ProviderError("yandex-cdn", "resource snapshot has no cname")
+                metadata["recreate"] = work
+                active = await self.db.update_generation(active.id, metadata=metadata)
+                await self.backup_database()
+                await self.notifier.emit(Event(
+                    target_id, "CRITICAL", "recreate-started",
+                    f"Recreating CDN resource {active.resource_id} in place", actor=actor,
+                ))
+
+            if work["stage"] == "snapshot":
+                operation = await self.yandex.delete_resource(
+                    work["old_resource_id"], f"delete:{target.id}:{active.sequence}:{work['old_resource_id']}"
+                )
+                work.update(stage="deleting", delete_operation=operation.get("id"))
+                metadata["recreate"] = work
+                active = await self.db.update_generation(active.id, metadata=metadata)
+            if work["stage"] == "deleting":
+                await self.yandex.wait_operation({"id": work["delete_operation"]})
+                work["stage"] = "deleted"
+                metadata["recreate"] = work
+                active = await self.db.update_generation(active.id, metadata=metadata)
+            if work["stage"] == "deleted":
+                operation = await self.yandex.recreate_resource(
+                    target, work["resource_snapshot"],
+                    f"recreate:{target.id}:{active.sequence}:{work['old_resource_id']}",
+                )
+                work.update(stage="creating", create_operation=operation.get("id"))
+                metadata["recreate"] = work
+                active = await self.db.update_generation(active.id, metadata=metadata)
+            if work["stage"] == "creating":
+                result = await self.yandex.wait_operation({"id": work["create_operation"]})
+                resource = extract_resource(result)
+                resource_id = str(resource["id"])
+                resource = await self._wait_resource(resource_id)
+                provider_cname = resource.get("providerCname") or resource.get("provider_cname")
+                old_provider = work.get("old_provider_cname")
+                if old_provider and provider_cname != old_provider:
+                    await self.db.update_generation(active.id, state=RotationState.ATTENTION)
+                    raise ProviderError(
+                        "yandex-cdn", f"provider CNAME changed from {old_provider} to {provider_cname}"
+                    )
+                endpoint = target.domain.name if target.domain and target.domain.name else provider_cname
+                if not endpoint:
+                    raise ProviderError("yandex-cdn", "recreated resource has no usable endpoint")
+                health = await self._wait_health(target, endpoint)
+                if not health.healthy:
+                    raise ProviderError("health", health.error or "recreated resource is unhealthy")
+                history = list(metadata.get("recreate_history") or [])
+                history.append({
+                    "old_resource_id": work["old_resource_id"], "new_resource_id": resource_id,
+                    "bytes_sent": active.bytes_sent, "completed_at": time.time(),
+                })
+                metadata.pop("recreate", None)
+                metadata["recreate_history"] = history[-20:]
+                active = await self.db.update_generation(
+                    active.id, resource_id=resource_id, provider_cname=provider_cname,
+                    certificate_id=work.get("certificate_id"), bytes_sent=0,
+                    last_metric_ts=None, metadata=metadata, activated_at=time.time(),
+                )
+                await self.notifier.emit(Event(
+                    target_id, "INFO", "recreate-complete",
+                    f"CDN recreated: {resource_id}; endpoint: {endpoint}", actor=actor,
+                ))
+            return active
+        finally:
+            if not lock_held:
+                await self.db.release_lock(target_id, owner)
 
     async def deactivate_drained(self) -> list[str]:
         changed = []

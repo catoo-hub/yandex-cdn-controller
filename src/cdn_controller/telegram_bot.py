@@ -92,7 +92,7 @@ async def run_bot(settings: Settings) -> None:
             return await deny(message)
         await message.answer(
             "/status /targets /target ID /traffic ID /history ID /alerts /whereami\n"
-            "/prepare ID /rotate ID /pause ID /resume ID /recheck ID /rollback ID /cleanup ID"
+            "/prepare ID /rotate ID /recreate ID /pause ID /resume ID /recheck ID /rollback ID /cleanup ID"
         )
 
     @router.message(Command("whereami"))
@@ -134,7 +134,7 @@ async def run_bot(settings: Settings) -> None:
         result = await api.action(command.args.strip(), action, f"telegram:{message.from_user.id}")
         await message.answer(f"Done: {html.escape(str(result))}"[:4000])
 
-    @router.message(Command("prepare", "rotate", "rollback", "cleanup"))
+    @router.message(Command("prepare", "rotate", "recreate", "rollback", "cleanup"))
     async def dangerous_action(message: Message, command: CommandObject):
         user_id = message.from_user.id if message.from_user else None
         if not allowed(user_id):

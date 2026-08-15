@@ -83,6 +83,10 @@ def create_app(controller: Controller, config: AppConfig, settings: Settings) ->
     async def rotate(target_id: str, body: ActionRequest):
         return await controller.rotate(target_id, body.actor)
 
+    @app.post("/api/v1/targets/{target_id}/recreate", dependencies=[Depends(authorize)])
+    async def recreate(target_id: str, body: ActionRequest):
+        return (await controller.recreate_in_place(target_id, body.actor)).model_dump(mode="json")
+
     @app.post("/api/v1/targets/{target_id}/rollback", dependencies=[Depends(authorize)])
     async def rollback(target_id: str, body: ActionRequest):
         return await controller.rollback(target_id, body.actor)
