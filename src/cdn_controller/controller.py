@@ -221,11 +221,12 @@ class Controller:
             )
             generation = await self.db.update_generation(
                 generation.id, resource_id=resource_id, provider_cname=provider_cname,
-                dns_record_id=dns_id, state=RotationState.READY,
+                dns_record_id=dns_id,
             )
             health = await self._wait_health(target, generation.fqdn)
             if not health.healthy:
                 raise ProviderError("health", health.error or "reserve is unhealthy", health.root_status)
+            generation = await self.db.update_generation(generation.id, state=RotationState.READY)
             await self.notifier.emit(Event(target_id, "INFO", "prepare-ready",
                                            f"Reserve ready: {generation.fqdn}", actor=actor))
             return generation
@@ -362,6 +363,13 @@ class Controller:
             status = str(resource.get("status", "")).upper()
             if status in {"READY", "ACTIVE"}:
                 return resource
+            # Current ourcdn Resource.Get has no top-level status. A completed
+            # resource is identifiable by its active flag, provider CNAME and
+            # attached Certificate Manager certificate in READY state.
+            ssl = resource.get("sslCertificate") or {}
+            if (resource.get("active") is True and resource.get("providerCname")
+                    and str(ssl.get("status", "")).upper() == "READY"):
+                return resource
             if status in {"ERROR", "FAILED", "SUSPENDED"}:
                 raise ProviderError("yandex-cdn", f"resource status {status}")
             await asyncio.sleep(10)
@@ -369,7 +377,8 @@ class Controller:
 
     async def _wait_health(self, target: TargetConfig, fqdn: str):
         result = None
-        for _ in range(30):
+        # CDN settings and DNS propagation may take up to 15 minutes.
+        for _ in range(90):
             result = await check_cdn_health(
                 fqdn, target.transport.path,
                 target.transport.expected_root_status, target.transport.expected_path_status,

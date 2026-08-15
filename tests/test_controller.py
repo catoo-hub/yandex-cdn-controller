@@ -1,4 +1,6 @@
 import pytest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from cdn_controller.controller import Controller
 from cdn_controller.db import Database
@@ -22,6 +24,19 @@ def test_nested_dns_challenge_is_parsed():
         "name": "_acme-challenge.example.com.",
         "value": "validation.example.net.",
     }
+
+
+@pytest.mark.asyncio
+async def test_current_yandex_resource_without_status_is_ready():
+    resource = {
+        "id": "resource-id",
+        "active": True,
+        "providerCname": "provider.gslb.yccdn.ru",
+        "sslCertificate": {"type": "CM", "status": "READY"},
+    }
+    controller = object.__new__(Controller)
+    controller.yandex = SimpleNamespace(get_resource=AsyncMock(return_value=resource))
+    assert await controller._wait_resource("resource-id") == resource
 
 
 @pytest.mark.asyncio
