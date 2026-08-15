@@ -61,12 +61,20 @@ class TransportConfig(BaseModel):
     path: str
     expected_root_status: int = 200
     expected_path_status: int = 400
+    healthcheck_mode: str = "http"
 
     @field_validator("path")
     @classmethod
     def path_shape(cls, value: str) -> str:
         if not value.startswith("/"):
             raise ValueError("transport.path must start with /")
+        return value
+
+    @field_validator("healthcheck_mode")
+    @classmethod
+    def healthcheck_mode_value(cls, value: str) -> str:
+        if value not in {"http", "provider_only"}:
+            raise ValueError("healthcheck_mode must be http or provider_only")
         return value
 
 

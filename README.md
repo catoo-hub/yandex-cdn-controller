@@ -128,6 +128,7 @@ targets:
       path: /api/uploadFile/
       expected_root_status: 200
       expected_path_status: 400
+      healthcheck_mode: provider_only
     rotation:
       mode: recreate_in_place
       recreate_at_gib: 740
@@ -145,6 +146,12 @@ domain:
 он есть), удаляет ресурс, создаёт его с теми же параметрами и сбрасывает локальный счётчик после
 успешного health-check. Если новый `providerCname` отличается от прежнего, цель переводится в
 `ATTENTION`: DNS автоматически не меняется.
+
+`healthcheck_mode: provider_only` предназначен для CDN, доступных только из мобильных сетей.
+Контроллер не делает HTTP-запросов со своего серверного IP, а проверяет через Yandex API, что
+Resource активен, имеет `providerCname`, сертификат готов и статус не равен `BLOCKED`,
+`SUSPENDED`, `FAILED` или `ERROR`. В этом режиме `expected_root_status` и
+`expected_path_status` не используются.
 
 Первичный импорт для прямого служебного домена:
 

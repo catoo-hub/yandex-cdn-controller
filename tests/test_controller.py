@@ -40,6 +40,55 @@ async def test_current_yandex_resource_without_status_is_ready():
 
 
 @pytest.mark.asyncio
+async def test_provider_only_health_uses_yandex_api_without_http(monkeypatch):
+    target = AppConfig.model_validate({
+        "targets": [{
+            "id": "direct", "yandex": {"folder_id": "folder", "origin_group_id": 42,
+            "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+            "transport": {"path": "/x/", "healthcheck_mode": "provider_only"},
+            "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 740},
+        }]
+    }).target("direct")
+    http_check = AsyncMock()
+    monkeypatch.setattr("cdn_controller.controller.check_cdn_health", http_check)
+    controller = object.__new__(Controller)
+    controller.yandex = SimpleNamespace(get_resource=AsyncMock(return_value={
+        "id": "resource", "active": True,
+        "providerCname": "stable.topology.gslb.yccdn.ru",
+        "sslCertificate": {"type": "DONT_USE", "status": "READY"},
+    }))
+
+    health = await controller._check_health(target, "unused.example", "resource")
+
+    assert health.healthy is True
+    assert health.root_status is None
+    http_check.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_provider_only_health_marks_suspended_resource_administrative():
+    target = AppConfig.model_validate({
+        "targets": [{
+            "id": "direct", "yandex": {"folder_id": "folder", "origin_group_id": 42,
+            "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+            "transport": {"path": "/x/", "healthcheck_mode": "provider_only"},
+            "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 740},
+        }]
+    }).target("direct")
+    controller = object.__new__(Controller)
+    controller.yandex = SimpleNamespace(get_resource=AsyncMock(return_value={
+        "id": "resource", "active": True, "status": "SUSPENDED",
+        "providerCname": "stable.topology.gslb.yccdn.ru",
+        "sslCertificate": {"type": "DONT_USE", "status": "READY"},
+    }))
+
+    health = await controller._check_health(target, "unused.example", "resource")
+
+    assert health.healthy is False
+    assert health.administrative is True
+
+
+@pytest.mark.asyncio
 async def test_dry_run_rotation_never_changes_active_generation(tmp_path):
     config = AppConfig.model_validate({
         "providers": {"remnawave": {"primary": {

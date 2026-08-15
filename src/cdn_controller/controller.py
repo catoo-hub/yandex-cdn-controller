@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .clients import (
-    CloudflareClient, ProviderError, YandexClient, check_cdn_health,
+    CloudflareClient, HealthResult, ProviderError, YandexClient, check_cdn_health,
     extract_resource, remnawave_client,
 )
 from .db import Database
@@ -85,11 +85,7 @@ class Controller:
                     active = await self.recreate_in_place(target_id, actor=actor, lock_held=True)
                     return {"target": target_id, "status": "ok", "active": active.model_dump(), "reserve": None}
                 active = await self._refresh_traffic(target, active)
-                health = await check_cdn_health(
-                    active.fqdn, target.transport.path,
-                    target.transport.expected_root_status, target.transport.expected_path_status,
-                    target.transport.port,
-                )
+                health = await self._check_health(target, active.fqdn, active.resource_id)
                 failures = await self._record_health(target, active, health)
                 if health.administrative:
                     await self.db.update_generation(active.id, state=RotationState.ATTENTION)
@@ -272,7 +268,7 @@ class Controller:
                 generation = await self.db.update_generation(
                     generation.id, provider_cname=provider_cname, dns_record_id=dns_id,
                 )
-            health = await self._wait_health(target, generation.fqdn)
+            health = await self._wait_health(target, generation.fqdn, resource_id)
             if not health.healthy:
                 raise ProviderError("health", health.error or "reserve is unhealthy", health.root_status)
             generation = await self.db.update_generation(generation.id, state=RotationState.READY)
@@ -325,11 +321,7 @@ class Controller:
                 for field in target.remnawave.update_fields:
                     if updated.get(field) != reserve.fqdn:
                         raise ProviderError("remnawave", f"field {field} was not updated")
-                health = await check_cdn_health(
-                    reserve.fqdn, target.transport.path,
-                    target.transport.expected_root_status, target.transport.expected_path_status,
-                    target.transport.port,
-                )
+                health = await self._check_health(target, reserve.fqdn, reserve.resource_id)
                 if not health.healthy:
                     await client.restore_host(
                         target.remnawave.host_id, previous, target.remnawave.update_fields
@@ -455,7 +447,7 @@ class Controller:
                 endpoint = target.domain.name if target.domain and target.domain.name else provider_cname
                 if not endpoint:
                     raise ProviderError("yandex-cdn", "recreated resource has no usable endpoint")
-                health = await self._wait_health(target, endpoint)
+                health = await self._wait_health(target, endpoint, resource_id)
                 if not health.healthy:
                     raise ProviderError("health", health.error or "recreated resource is unhealthy")
                 history = list(metadata.get("recreate_history") or [])
@@ -534,15 +526,36 @@ class Controller:
             await asyncio.sleep(10)
         raise ProviderError("yandex-cdn", "resource processing timeout")
 
-    async def _wait_health(self, target: TargetConfig, fqdn: str):
+    async def _check_health(self, target: TargetConfig, fqdn: str,
+                            resource_id: str | None = None) -> HealthResult:
+        if target.transport.healthcheck_mode == "provider_only":
+            if not resource_id:
+                return HealthResult(False, None, None, "resource ID is missing", False)
+            resource = await self.yandex.get_resource(resource_id)
+            status = str(resource.get("status", "")).upper()
+            administrative = status in {"BLOCKED", "SUSPENDED"}
+            failed = status in {"ERROR", "FAILED", "INVALID", "DELETED"}
+            ssl = resource.get("sslCertificate") or {}
+            ssl_type = str(ssl.get("type", "DONT_USE")).upper()
+            ssl_status = str(ssl.get("status", "READY")).upper()
+            ssl_ready = ssl_type == "DONT_USE" or ssl_status == "READY"
+            healthy = (resource.get("active") is True
+                       and bool(resource.get("providerCname") or resource.get("provider_cname"))
+                       and ssl_ready and not failed and not administrative)
+            error = None if healthy else f"provider resource is not ready (status={status or 'UNKNOWN'})"
+            return HealthResult(healthy, None, None, error, administrative)
+        return await check_cdn_health(
+            fqdn, target.transport.path,
+            target.transport.expected_root_status, target.transport.expected_path_status,
+            target.transport.port,
+        )
+
+    async def _wait_health(self, target: TargetConfig, fqdn: str,
+                           resource_id: str | None = None):
         result = None
         # CDN settings and DNS propagation may take up to 15 minutes.
         for _ in range(90):
-            result = await check_cdn_health(
-                fqdn, target.transport.path,
-                target.transport.expected_root_status, target.transport.expected_path_status,
-                target.transport.port,
-            )
+            result = await self._check_health(target, fqdn, resource_id)
             if result.healthy or result.administrative:
                 return result
             await asyncio.sleep(10)

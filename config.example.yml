@@ -75,6 +75,8 @@ targets:
       path: /api/uploadFile/
       expected_root_status: 200
       expected_path_status: 400
+      # Для CDN, который доступен только из мобильных сетей.
+      healthcheck_mode: provider_only
     rotation:
       mode: recreate_in_place
       recreate_at_gib: 740
