@@ -147,7 +147,7 @@ class YandexClient:
             "deletionProtection": False,
         }
         return await self.cert.request(
-            "POST", "/certificate-manager/v1/certificates:requestNew", json=payload,
+            "POST", "/certificate-manager/v1/certificates/requestNew", json=payload,
             headers={"Idempotency-Key": idempotency_key},
         )
 

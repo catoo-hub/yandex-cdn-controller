@@ -14,6 +14,22 @@ def test_webhook_signature_is_stable():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_certificate_request_uses_documented_rest_path():
+    route = respx.post(
+        "https://certificate-manager.api.cloud.yandex.net/"
+        "certificate-manager/v1/certificates/requestNew"
+    ).mock(return_value=Response(200, json={"id": "operation-1"}))
+    client = YandexClient("", required=False)
+    try:
+        await client.create_certificate("folder", "yc-001.example.com", "idem")
+    finally:
+        await client.close()
+    assert route.called
+    assert route.calls[0].request.headers["Idempotency-Key"] == "idem"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_yandex_create_resource_uses_current_nested_schema():
     route = respx.post("https://cdn.api.cloud.yandex.net/cdn/v1/resources").mock(
         return_value=Response(200, json={"id": "operation-1"})
