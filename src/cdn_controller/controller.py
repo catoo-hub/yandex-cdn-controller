@@ -476,7 +476,16 @@ class Controller:
         for generation in await self.db.generations():
             if generation.state == RotationState.DRAINING and generation.drain_after and generation.drain_after <= time.time():
                 if not self.settings.dry_run and generation.resource_id:
-                    await self.yandex.update_resource_active(generation.resource_id, False)
+                    try:
+                        await self.yandex.update_resource_active(generation.resource_id, False)
+                    except ProviderError as exc:
+                        if exc.status_code != 404:
+                            raise
+                        log.info(
+                            "Drained CDN resource %s is already absent; retiring local generation %s",
+                            generation.resource_id,
+                            generation.id,
+                        )
                 await self.db.update_generation(generation.id, state=RotationState.RETIRED)
                 changed.append(generation.fqdn)
         return changed

@@ -2,6 +2,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from cdn_controller.clients import ProviderError
 from cdn_controller.controller import Controller
 from cdn_controller.db import Database
 from cdn_controller.models import AppConfig, RotationState
@@ -125,6 +126,35 @@ async def test_import_existing_discovers_yandex_provider_endpoint(tmp_path):
         assert generation.provider_cname == "stable.topology.gslb.yccdn.ru"
         assert generation.bytes_sent == 123
         assert generation.metadata["resource_cname"] == "internal.example"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_drained_resource_is_retired_locally(tmp_path):
+    config = AppConfig.model_validate({
+        "targets": [{
+            "id": "direct", "yandex": {"folder_id": "folder", "origin_group_id": 42,
+            "origin_protocol": "HTTP", "origin_host_header": "203.0.113.10"},
+            "transport": {"healthcheck_mode": "provider_only"},
+            "rotation": {"mode": "recreate_in_place", "recreate_at_gib": 600},
+        }]
+    })
+    db = Database(str(tmp_path / "state.db"))
+    controller = Controller(config, Settings(dry_run=False, database_path=db.path), db)
+    await controller.initialize()
+    try:
+        generation = await db.import_active("direct", "deleted-resource", "old.example")
+        await db.update_generation(
+            generation.id, state=RotationState.DRAINING, drain_after=1,
+        )
+        controller.yandex.update_resource_active = AsyncMock(side_effect=ProviderError(
+            "yandex-cdn", "HTTP 404", 404,
+        ))
+
+        assert await controller.deactivate_drained() == ["old.example"]
+        retired = (await db.generations("direct"))[0]
+        assert retired.state == RotationState.RETIRED
     finally:
         await controller.close()
 
