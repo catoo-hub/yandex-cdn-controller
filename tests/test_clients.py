@@ -80,7 +80,7 @@ async def test_yandex_create_resource_uses_current_nested_schema():
     assert '"browserCacheSettings":{"enabled":true,"value":"0"}' in body
     assert '"ignoreCookie":{"enabled":true,"value":false}' in body
     assert '"allowedHttpMethods":{"enabled":true,"value":["GET","HEAD","OPTIONS"]}' in body
-    assert '"ignoreQueryString":{"enabled":true,"value":true}' in body
+    assert '"ignoreQueryString":{"enabled":true,"value":false}' in body
     key = route.calls[0].request.headers["Idempotency-Key"]
     assert str(uuid.UUID(key)) == key
     assert key == YandexClient._idempotency_key("idem")
@@ -129,8 +129,14 @@ async def test_recreate_resource_copies_writable_snapshot_and_drops_read_only_op
         "providerType": "ourcdn",
         "sslCertificate": {"type": "CM", "status": "READY", "data": {"cm": {"id": "cert"}}},
         "options": {
-            "disableCache": {"enabled": True, "value": True},
-            "allowedHttpMethods": {"enabled": True, "value": ["GET", "HEAD", "OPTIONS"]},
+            "disableCache": {"enabled": False, "value": False},
+            "edgeCacheSettings": {"enabled": True, "value": "345600s"},
+            "browserCacheSettings": {"enabled": True, "value": "345600s"},
+            "ignoreCookie": {"enabled": True, "value": True},
+            "queryParamsOptions": {
+                "ignoreQueryString": {"enabled": True, "value": True}
+            },
+            "allowedHttpMethods": {"enabled": True, "value": ["GET", "HEAD"]},
             "customServerName": {"enabled": True, "value": "read-only.example"},
         },
     }
@@ -144,6 +150,10 @@ async def test_recreate_resource_copies_writable_snapshot_and_drops_read_only_op
     assert body["originProtocol"] == "HTTPS"
     assert body["sslCertificate"] == {"type": "CM", "data": {"cm": {"id": "cert"}}}
     assert body["options"]["disableCache"]["value"] is True
+    assert body["options"]["browserCacheSettings"]["value"] == "0"
+    assert body["options"]["ignoreCookie"]["value"] is False
+    assert body["options"]["queryParamsOptions"]["ignoreQueryString"]["value"] is False
+    assert body["options"]["allowedHttpMethods"]["value"] == ["GET", "HEAD", "OPTIONS"]
     assert "customServerName" not in body["options"]
 
 

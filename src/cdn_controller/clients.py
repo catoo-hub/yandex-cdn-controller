@@ -190,7 +190,7 @@ class YandexClient:
                     "host": {"enabled": True, "value": target.yandex.origin_host_header}
                 },
                 "queryParamsOptions": {
-                    "ignoreQueryString": {"enabled": True, "value": True}
+                    "ignoreQueryString": {"enabled": True, "value": False}
                 },
             },
         }
@@ -218,6 +218,19 @@ class YandexClient:
         }
         options = {key: value for key, value in (snapshot.get("options") or {}).items()
                    if key in option_names}
+        # XHTTP transports must never inherit cache-friendly settings from an old resource.
+        # Each request, query string and cookie can carry transport/session data.
+        options.update({
+            "disableCache": {"enabled": True, "value": True},
+            "browserCacheSettings": {"enabled": True, "value": "0"},
+            "ignoreCookie": {"enabled": True, "value": False},
+            "queryParamsOptions": {
+                "ignoreQueryString": {"enabled": True, "value": False}
+            },
+            "allowedHttpMethods": {
+                "enabled": True, "value": ["GET", "HEAD", "OPTIONS"]
+            },
+        })
         ssl = snapshot.get("sslCertificate") or {}
         ssl_payload = {"type": ssl.get("type", "DONT_USE")}
         if ssl_payload["type"] == "CM":
